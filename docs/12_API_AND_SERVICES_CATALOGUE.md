@@ -17,8 +17,12 @@ graph TD
     UI --> HouseholdService[HouseholdService]
     UI --> InventoryService[InventoryService]
     UI --> RecipeService[RecipeService]
+    UI --> MealLogService[MealLogService]
     UI --> RecommendationService[RecommendationService]
     UI --> AndaazaService[AndaazaLearningService]
+
+    MealLogService -->|scaleRecipeIngredients| RecipeService
+    MealLogService -->|"mark_meal_cooked() RPC"| Supabase[supabaseClient]
 
     Orchestrator --> OCRService[OCRService]
     Orchestrator --> MatchingService[IngredientMatchingService]
@@ -243,21 +247,27 @@ Validates and commits a reviewed bill atomically via the `commit_scanned_bill()`
 
 ---
 
-### 2.9 `RecipeService`
+### 2.9 `RecipeService` (Phase 4B)
 
-Handles global recipe retrieval, custom recipe creation, and inventory-driven recipe search.
+Global master recipe catalogue (`household_id IS NULL`) plus household-owned custom recipes. `recipes.ingredients` is a jsonb array of `{ canonical_name, base_quantity_grams, is_optional? }` scaled for `base_servings` — see [09_RECIPE_AND_MEAL_LOGGING_SPECIFICATION.md §7](./09_RECIPE_AND_MEAL_LOGGING_SPECIFICATION.md) for why this differs from the originally-designed `recipe_ingredients` join table.
 
-#### `getRecipes(filters)`
-- **Parameters**: `filters` (`{ cuisine?: string, mealType?: string, maxPrepTime?: number }`).
-- **Returns**: `Promise<Array<Recipe>>`
+#### `getRecipes(householdId, filters)`
+- **Parameters**: `householdId` (string UUID), `filters` (`{ mealType?: string, cuisine?: string }`).
+- **Returns**: `Promise<Array<Recipe>>` — global recipes plus this household's own custom recipes.
 
 #### `getRecipeById(recipeId)`
 - **Parameters**: `recipeId` (string UUID).
-- **Returns**: `Promise<RecipeWithIngredients>`
+- **Returns**: `Promise<Recipe|null>`
 
-#### `searchRecipesByInventory(householdId, minimumMatchThreshold = 0.70)`
-- **Parameters**: `householdId` (string UUID), `minimumMatchThreshold` (number).
-- **Returns**: `Promise<Array<{ recipe: Recipe, missingIngredients: Array, matchPercentage: number }>>`
+#### `createCustomRecipe(householdId, recipePayload)`
+- **Parameters**: `householdId` (string UUID), `recipePayload` (`{ name, meal_type, cuisine?, base_servings, ingredients, instructions? }`).
+- **Returns**: `Promise<Recipe>`
+
+#### `scaleRecipeIngredients(recipe, targetServings)`
+- **Parameters**: `recipe` (Recipe row), `targetServings` (number).
+- **Returns**: `Array<{ canonical_name, quantity_grams, is_optional }>` — pure function, no I/O.
+
+> `searchRecipesByInventory` (inventory-driven recipe matching) is **not implemented** — it's a recommendation-adjacent feature and out of scope for the Phase 4B core deduction pipeline, same as Phase 4A excluded recommendation logic.
 
 ---
 
@@ -360,7 +370,42 @@ Household-wide (not per-ingredient) intelligence summary, recalculated once per 
 
 ---
 
-### 2.17 `supabaseClient`
+### 2.17 `MealLogService` (Phase 4B)
+
+Meal lifecycle (`planned` -> `cooked` | `skipped`) and the atomic, FIFO-aware stock deduction that runs when a meal transitions to `cooked`, via the `mark_meal_cooked()` RPC (migration `0006`).
+
+#### `getMealLogs(householdId, dateRange)`
+- **Parameters**: `householdId` (string UUID), `dateRange` (`{ from?: string, to?: string }`).
+- **Returns**: `Promise<Array<MealLog>>`
+
+#### `createMealLog(householdId, payload)`
+- **Parameters**: `householdId` (string UUID), `payload` (`{ date, meal_type, recipe_id?, headcount?, notes? }`).
+- **Returns**: `Promise<MealLog>` — created in `'planned'` status.
+
+#### `markAsSkipped(householdId, mealLogId)`
+- **Returns**: `Promise<{ success: boolean }>` — no inventory side effects.
+
+#### `markAsCooked(householdId, mealLogId, requiredIngredients)`
+- **Parameters**: `householdId` (string UUID), `mealLogId` (string UUID), `requiredIngredients` (`Array<{ canonical_name, quantity_grams }>`, typically `RecipeService.scaleRecipeIngredients(...)` output plus roti flour).
+- **Returns**: `Promise<{ success, mealLogId, alreadyCooked, cookedAt, hasShortfall, deductions }>`.
+- **Behavior**: Idempotent — re-calling on an already-cooked meal returns `alreadyCooked: true` without deducting stock again (enforced by the RPC, not just client-side). FIFO-deducts across `inventory_batches` (soonest expiry first); a shortfall never fails the call, it's reported per-ingredient in `deductions`.
+- **Error Behavior**: Throws `AppError` with code `MEAL_COOK_VALIDATION_ERROR` for missing IDs, or `MEAL_COOK_FAILED` if the RPC errors.
+
+---
+
+### 2.18 `rotiCalculator` (Phase 4B, `src/utils/rotiCalculator.js`)
+
+Pure calculation utility, not a service (no I/O). Computes flour/dough requirements from `household.roti_per_adult`/`roti_per_child`, per-member `roti_preference` overrides, and the `guests` table — see [09_RECIPE_AND_MEAL_LOGGING_SPECIFICATION.md §7.1](./09_RECIPE_AND_MEAL_LOGGING_SPECIFICATION.md) for why this differs from the originally-designed age-tiered formula.
+
+#### `calculateRotiRequirement({ members, household, guestCount, andaazaFactor?, flourPerRotiGrams? })`
+- **Returns**: `{ totalRotis, totalFlourGrams, estimatedDoughGrams }`
+
+#### `getEffectiveGuestCount(guests, date, mealType)`
+- **Returns**: `number` — sums `guests.count` for rows matching `date` and (`meal_scope === mealType` or `meal_scope === 'all'`).
+
+---
+
+### 2.19 `supabaseClient`
 
 The unified client configuration initializing Supabase JS SDK.
 
