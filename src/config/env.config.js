@@ -3,10 +3,13 @@
  * Validates and exposes environment variables required by KitchenMind.
  */
 
+export const isViteContext = typeof import.meta !== 'undefined' && Boolean(import.meta.env)
+const metaEnv = isViteContext ? import.meta.env : {}
+
 export const env = {
-  SUPABASE_URL: import.meta.env.VITE_SUPABASE_URL || '',
-  SUPABASE_ANON_KEY: import.meta.env.VITE_SUPABASE_ANON_KEY || '',
-  GEMINI_API_KEY: import.meta.env.VITE_GEMINI_API_KEY || '',
+  SUPABASE_URL: metaEnv.VITE_SUPABASE_URL || process.env.VITE_SUPABASE_URL || '',
+  SUPABASE_ANON_KEY: metaEnv.VITE_SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || '',
+  GEMINI_API_KEY: metaEnv.VITE_GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY || '',
 }
 
 /**

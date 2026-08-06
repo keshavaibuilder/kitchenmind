@@ -21,8 +21,9 @@ SECURITY DEFINER
 VOLATILE
 ```
 
-- **Security Context**: `SECURITY DEFINER` (Enforces explicit RLS membership check against `auth.uid()`).
+- **Security Context**: `SECURITY DEFINER` (Enforces explicit RLS membership check against `auth.uid()`). The membership check is unconditional — it is **not** skipped when `auth.uid()` is `NULL` (unauthenticated/anon caller), since a `NULL` comparison via `=` never matches. `search_path` is pinned (`SET search_path = public, pg_temp`) to prevent search-path hijacking of unqualified calls inside the function body. `EXECUTE` is explicitly revoked from `PUBLIC` and granted only to the `authenticated` role, so the `anon` key alone cannot invoke this function even before the membership check runs.
 - **Volatility**: `VOLATILE` (Mutates database state).
+- **Idempotency**: implemented as an atomic `INSERT ... ON CONFLICT (household_id, idempotency_key) DO NOTHING`, not a check-then-insert — this is race-free under concurrent duplicate submissions (double-tap, client retry racing the original request); PL/pgSQL's `FOUND` reliably reports whether the conflict branch was taken.
 
 ---
 

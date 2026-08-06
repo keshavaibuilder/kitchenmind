@@ -25,13 +25,25 @@ graph TD
     Orchestrator --> BillService[BillService]
     Orchestrator --> InventoryService
 
-    AuthService --> Supabase[supabaseClient]
+    UI --> BillPersistence[BillPersistenceService]
+    BillPersistence -->|ACID commit| Supabase[supabaseClient]
+    BillPersistence -.->|fire-and-forget post-commit| AIObs[AIObservationService]
+    BillPersistence -.->|fire-and-forget post-commit| LearningEngine[AndaazaLearningEngine]
+    LearningEngine --> ConsumptionSvc[ConsumptionProfileService]
+    LearningEngine --> PredictionSvc[PredictionService]
+    LearningEngine --> HouseholdIntelSvc[HouseholdIntelligenceService]
+
+    AuthService --> Supabase
     HouseholdService --> Supabase
     InventoryService --> Supabase
     BillService --> Supabase
     RecipeService --> Supabase
     RecommendationService --> Supabase
     AndaazaService --> Supabase
+    AIObs --> Supabase
+    ConsumptionSvc --> Supabase
+    PredictionSvc --> Supabase
+    HouseholdIntelSvc --> Supabase
 ```
 
 ---
@@ -222,11 +234,12 @@ Coordinates the end-to-end flow from image upload to verified inventory addition
 
 ### 2.8 `BillPersistenceService`
 
-Sub-service dedicated to transactional creation of bill master records along with their line items.
+Validates and commits a reviewed bill atomically via the `commit_scanned_bill()` PostgreSQL RPC, then fires the Phase 4A learning hooks without blocking the caller.
 
-#### `persistBillWithLineItems(billHeader, verifiedItems)`
-- **Parameters**: `billHeader` (Object), `verifiedItems` (Array).
-- **Returns**: `Promise<{ billId: string, lineItemIds: Array<string> }>`
+#### `commitBill(householdId, reviewedBillData)`
+- **Parameters**: `householdId` (string UUID), `reviewedBillData` (`{ idempotencyKey?, merchant?, billDate?, totalAmount?, source?, items: Array }`).
+- **Returns**: `Promise<{ success, commitId, billId, householdId, idempotencyKey, isDuplicate, metrics, committedAt }>` — resolves as soon as the ACID commit completes; does **not** wait on `AIObservationService` or `AndaazaLearningEngine`.
+- **Error Behavior**: Throws `AppError` with code `PERSISTENCE_VALIDATION_ERROR` for pre-commit validation failures (missing household, zero active items, invalid quantities) or `BILL_COMMIT_FAILED` if the RPC itself errors.
 
 ---
 
@@ -276,7 +289,78 @@ Adaptive machine learning engine that calculates household-specific portion modi
 
 ---
 
-### 2.12 `supabaseClient`
+### 2.12 `AIObservationService` (Phase 3H / 4A)
+
+Foundation service for generating discrete, fact-based AI observations from a committed bill — separate from the quantitative learning pipeline in §2.13–2.16. Runs asynchronously post-commit and never affects the committed transaction.
+
+#### `generateObservations(householdId, activeItems, existingInventory)`
+- **Parameters**: `householdId` (string UUID), `activeItems` (Array of reviewed line items), `existingInventory` (Array of current inventory rows, used for delta comparison).
+- **Returns**: `Array<{ household_id, observation_type, canonical_name, details, created_at }>` — pure function, no I/O.
+- **Observation Types**: `NEW_INGREDIENT_DISCOVERED`, `FIRST_PURCHASE`, `UNUSUAL_PURCHASE_QUANTITY` (≥3000g), `DUPLICATE_PURCHASE` (same ingredient twice in one receipt), `PANTRY_DIVERSITY` (milestone at 5/10/25/50/100 unique ingredients).
+
+#### `recordPostCommitObservations(householdId, activeItems)`
+- **Parameters**: `householdId` (string UUID), `activeItems` (Array).
+- **Returns**: `Promise<{ success: boolean, observationsCount: number, observations?: Array, error?: string }>` — fetches current inventory, delegates to `generateObservations`, and never throws (errors are caught and logged).
+
+---
+
+### 2.13 `AndaazaLearningEngine` (Phase 4A)
+
+The Phase 4A intelligence orchestrator. Single entry point invoked by `BillPersistenceService` after every successful commit; coordinates `ConsumptionProfileService`, `PredictionService`, and `HouseholdIntelligenceService` and persists their outputs. See [07_ANDAAZA_AI_LEARNING_ENGINE.md §6](./07_ANDAAZA_AI_LEARNING_ENGINE.md#6-learning-model) for the full learning model.
+
+#### `processPostCommitLearning(householdId, activeItems, billMeta)`
+- **Parameters**: `householdId` (string UUID), `activeItems` (Array of confirmed line items), `billMeta` (`{ billId?, billDate?, merchant? }`).
+- **Returns**: `Promise<{ success: boolean, profilesUpdated: number, predictionsCount: number, executionTimeMs: number, householdProfileSummary, error?: string }>`.
+- **Error Behavior**: Never throws — every per-item DB write and the household-profile recalculation are individually try/caught so one failing write cannot prevent the rest of the bill's items from being learned from.
+- **Side Effects**: writes to `purchase_patterns` (insert), `ingredient_consumption_profile` (upsert), `prediction_cache` (upsert), and `household_learning_profile` (upsert).
+
+---
+
+### 2.14 `ConsumptionProfileService` (Phase 4A)
+
+Calculates ingredient-level consumption statistics. Core calculation is a pure function for testability; fetch method is the read-side API.
+
+#### `calculateProfileUpdate(currentProfile, newPurchaseEvent, history)`
+- **Parameters**: `currentProfile` (existing profile row or `null`), `newPurchaseEvent` (`{ quantityGrams, purchaseDate, brand?, unit? }`), `history` (Array, used for brand-frequency evolution).
+- **Returns**: `{ avg_interval_days, avg_purchase_grams, consumption_velocity_g_per_day, preferred_brand, preferred_unit, confidence_score, sample_count, last_purchased_at, updated_at }` — pure, deterministic, no I/O.
+
+#### `getIngredientProfile(householdId, canonicalName)`
+- **Parameters**: `householdId` (string UUID), `canonicalName` (string).
+- **Returns**: `Promise<IngredientConsumptionProfile|null>` — read-only API; returns `null` (with a logged warning) on fetch failure rather than throwing.
+
+---
+
+### 2.15 `PredictionService` (Phase 4A)
+
+Deterministic depletion and stock-health calculations consuming `ConsumptionProfileService` outputs.
+
+#### `calculateDepletion(currentStockGrams, velocityGramsPerDay, fromDate = now)`
+- **Returns**: `{ predictedDepletionDate: 'YYYY-MM-DD', daysUntilDepletion: number, isLowStockRisk: boolean }` — pure function.
+
+#### `calculatePantryHealthScore(ingredientDepletions)`
+- **Parameters**: `ingredientDepletions` (Array of `{ daysUntilDepletion }`).
+- **Returns**: `number` (0–100) — pure function; returns `100` for an empty pantry (no ingredients tracked yet ≠ unhealthy pantry).
+
+#### `getHouseholdPredictions(householdId)`
+- **Parameters**: `householdId` (string UUID).
+- **Returns**: `Promise<Array<PredictionCacheRow>>` — read-only API, sorted by `days_until_depletion` ascending (most urgent first).
+
+---
+
+### 2.16 `HouseholdIntelligenceService` (Phase 4A)
+
+Household-wide (not per-ingredient) intelligence summary, recalculated once per commit.
+
+#### `calculateHouseholdMetrics(householdId, inventoryItems, billHistory)`
+- **Returns**: `{ household_id, pantry_diversity_score, shopping_frequency_days, top_categories, preferred_shopping_day, total_bills_analyzed, last_analyzed_at }` — pure function.
+
+#### `getHouseholdProfile(householdId)`
+- **Parameters**: `householdId` (string UUID).
+- **Returns**: `Promise<HouseholdLearningProfile|null>` — read-only API.
+
+---
+
+### 2.17 `supabaseClient`
 
 The unified client configuration initializing Supabase JS SDK.
 

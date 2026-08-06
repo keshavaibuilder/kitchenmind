@@ -4,7 +4,7 @@
 
 ## 1. Executive Implementation Overview
 
-KitchenMind is being developed in a structured 5-phase evolution. The system currently sits at **Phase 3F Complete** (Bill processing pipeline with in-memory review UI verified) and is preparing to begin **Phase 3G** (PostgreSQL RPC `commit_scanned_bill()` atomic persistence).
+KitchenMind is being developed in a structured 5-phase evolution. The system currently sits at **Phase 4A Complete** (Andaaza Intelligence Engine — household consumption learning, prediction, and pantry intelligence — fully implemented and verified on top of the Phase 3H persistence foundation).
 
 ```mermaid
 gantt
@@ -18,12 +18,14 @@ gantt
     Gemini 2.5 Flash OCR & Matching    :done,    p4, 2026-04-30, 2026-05-31
     section Phase 3: Receipt Scanning & Persistence
     ScanBill Review UI (Phase 3F)      :done,    p5, 2026-06-01, 2026-08-05
-    PostgreSQL RPC commit_scanned_bill (3G) :active, p6, 2026-08-06, 2026-08-20
-    section Phase 4: Recipes & Deductions
-    Meal Logging & Recipe Deductions    :crit,    p7, 2026-08-20, 2026-09-30
-    Andaaza Machine Calibration         :         p8, 2026-09-30, 2026-10-31
+    PostgreSQL RPC commit_scanned_bill (3G) :done,  p6, 2026-08-06, 2026-08-06
+    E2E Integration & Production Hardening (3H):done, p7, 2026-08-06, 2026-08-06
+    section Phase 4: Intelligence, Recipes & Deductions
+    Andaaza Intelligence Engine (4A)    :done,    p8, 2026-08-06, 2026-08-06
+    Meal Logging & Recipe Deductions    :active,  p9, 2026-08-07, 2026-09-30
+    Andaaza Volumetric Calibration      :         p10, 2026-09-30, 2026-10-31
     section Phase 5: Financial Analytics
-    Monthly Budget & Spend Insights     :        p9, 2026-11-01, 2026-12-15
+    Monthly Budget & Spend Insights     :        p11, 2026-11-01, 2026-12-15
 ```
 
 ---
@@ -37,7 +39,7 @@ The table below provides a comprehensive audit of all frontend pages, components
 | [`src/App.jsx`](file:///mnt/c/Users/keysh/github/kitchenmind/src/App.jsx) | Router / Layout | **Completed** | Main routing table, layout shell, auth state listener |
 | [`src/pages/Home.jsx`](file:///mnt/c/Users/keysh/github/kitchenmind/src/pages/Home.jsx) | Page View | **Completed** | Today's meals overview, low stock alerts, quick actions |
 | [`src/pages/Inventory.jsx`](file:///mnt/c/Users/keysh/github/kitchenmind/src/pages/Inventory.jsx) | Page View | **Completed** | Inventory grid, category grouping, threshold badges |
-| [`src/pages/ScanBill.jsx`](file:///mnt/c/Users/keysh/github/kitchenmind/src/pages/ScanBill.jsx) | Page View | **Completed (Phase 3F)** | Receipt upload, Gemini OCR, in-memory line item review UI |
+| [`src/pages/ScanBill.jsx`](file:///mnt/c/Users/keysh/github/kitchenmind/src/pages/ScanBill.jsx) | Page View | **Completed (Phase 3H)** | End-to-end receipt scanning, editing, confirmation, & persistence |
 | [`src/pages/AddItem.jsx`](file:///mnt/c/Users/keysh/github/kitchenmind/src/pages/AddItem.jsx) | Page View | **Completed** | Manual inventory item entry with unit conversion |
 | [`src/pages/Onboarding.jsx`](file:///mnt/c/Users/keysh/github/kitchenmind/src/pages/Onboarding.jsx) | Page View | **Completed** | Multi-step household setup wizard |
 | [`src/pages/Login.jsx`](file:///mnt/c/Users/keysh/github/kitchenmind/src/pages/Login.jsx) | Page View | **Completed** | Supabase auth login screen |
@@ -48,46 +50,91 @@ The table below provides a comprehensive audit of all frontend pages, components
 | [`src/services/OCRService.js`](file:///mnt/c/Users/keysh/github/kitchenmind/src/services/OCRService.js) | AI Integration | **Completed** | Gemini 2.5 Flash receipt OCR parsing |
 | [`src/services/IngredientMatchingService.js`](file:///mnt/c/Users/keysh/github/kitchenmind/src/services/IngredientMatchingService.js) | AI Service | **Completed** | Alias resolution and confidence scoring |
 | [`src/services/BillProcessingOrchestrator.js`](file:///mnt/c/Users/keysh/github/kitchenmind/src/services/BillProcessingOrchestrator.js) | Orchestration | **Completed** | In-memory OCR + matching workflow pipeline |
-| [`src/services/BillPersistenceService.js`](file:///mnt/c/Users/keysh/github/kitchenmind/src/services/BillPersistenceService.js) | Persistence | **Designed (Phase 3G)** | Pre-commit validation & RPC wrapper |
-| [`src/services/AndaazaLearningService.js`](file:///mnt/c/Users/keysh/github/kitchenmind/src/services/AndaazaLearningService.js) | AI Learning | **Completed** | Post-commit async calibration logger |
+| [`src/services/BillPersistenceService.js`](file:///mnt/c/Users/keysh/github/kitchenmind/src/services/BillPersistenceService.js) | Persistence | **Completed (Phase 3H)** | Pre-commit validation, RPC invocation, structured logging, async post-hooks |
+| [`src/services/AIObservationService.js`](file:///mnt/c/Users/keysh/github/kitchenmind/src/services/AIObservationService.js) | AI Learning | **Completed (Phase 3H)** | Post-commit AI observation foundation service |
+| [`src/services/AndaazaLearningService.js`](file:///mnt/c/Users/keysh/github/kitchenmind/src/services/AndaazaLearningService.js) | AI Learning | **Stub (unimplemented)** | Empty placeholder from the initial commit; `BillPersistenceService` guards the call with `typeof === 'function'` so it's a safe no-op today. Volumetric andaaza calibration (§2 of `07_ANDAAZA_AI_LEARNING_ENGINE.md`) will implement this in a future phase — do not confuse with the Phase 4A `AndaazaLearningEngine` below, which is unrelated and fully implemented |
+| [`src/utils/reconciliation.js`](file:///mnt/c/Users/keysh/github/kitchenmind/src/utils/reconciliation.js) | Reconciliation | **Completed (Phase 3H)** | Inventory stock vs active batch reconciliation auditor |
+| [`src/utils/logger.js`](file:///mnt/c/Users/keysh/github/kitchenmind/src/utils/logger.js) | Telemetry | **Completed (Phase 3H)** | Structured telemetry and sanitization logger |
+| [`src/services/AndaazaLearningEngine.js`](file:///mnt/c/Users/keysh/github/kitchenmind/src/services/AndaazaLearningEngine.js) | AI Learning | **Completed (Phase 4A)** | Post-commit intelligence orchestrator: consumption profiles, predictions, household metrics |
+| [`src/services/ConsumptionProfileService.js`](file:///mnt/c/Users/keysh/github/kitchenmind/src/services/ConsumptionProfileService.js) | AI Learning | **Completed (Phase 4A)** | Deterministic consumption velocity, interval, brand & confidence calculation |
+| [`src/services/PredictionService.js`](file:///mnt/c/Users/keysh/github/kitchenmind/src/services/PredictionService.js) | AI Learning | **Completed (Phase 4A)** | Depletion date, low-stock risk, pantry health score algorithms |
+| [`src/services/HouseholdIntelligenceService.js`](file:///mnt/c/Users/keysh/github/kitchenmind/src/services/HouseholdIntelligenceService.js) | AI Learning | **Completed (Phase 4A)** | Pantry diversity, category trends, shopping cadence aggregation |
+| [`src/services/__tests__/mockSupabaseTable.js`](file:///mnt/c/Users/keysh/github/kitchenmind/src/services/__tests__/mockSupabaseTable.js) | Test Utility | **Completed (Phase 4A)** | In-memory `.from()` mock so tests/benchmarks measure engine logic, not network I/O |
 | [`src/hooks/useBillProcessing.js`](file:///mnt/c/Users/keysh/github/kitchenmind/src/hooks/useBillProcessing.js) | Custom Hook | **Completed** | Hook connecting ScanBill UI to Orchestrator |
 | [`src/hooks/useInventory.js`](file:///mnt/c/Users/keysh/github/kitchenmind/src/hooks/useInventory.js) | Custom Hook | **Completed** | React Query hook for inventory fetching |
-| [`src/hooks/useHousehold.js`](file:///mnt/c/Users/keysh/github/kitchenmind/src/hooks/useHousehold.js) | Custom Hook | **Completed** | React Query hook for household state |
-| [`src/hooks/useAuth.js`](file:///mnt/c/Users/keysh/github/kitchenmind/src/hooks/useAuth.js) | Custom Hook | **Completed** | Auth session hook |
-| [`src/store/authStore.js`](file:///mnt/c/Users/keysh/github/kitchenmind/src/store/authStore.js) | State Store | **Completed** | Zustand auth store |
-| `commit_scanned_bill()` | Database RPC | **Next Up (Phase 3G)** | PostgreSQL atomic commit stored procedure |
+| `supabase/migrations/0004_rpc_commit_scanned_bill.sql` | Database RPC | **Completed (Phase 3G)** | PostgreSQL atomic commit stored procedure with idempotency |
+| `supabase/migrations/0005_andaaza_intelligence_schema.sql` | Database Schema | **Completed (Phase 4A)** | `ingredient_consumption_profile`, `purchase_patterns`, `prediction_cache`, `household_learning_profile` tables + RLS |
 
 ---
 
-## 3. Feature Matrix: Completed vs. Pending
+## 3. Performance Benchmark & Integration Test Results
 
-### 3.1 Completed Milestones (Phases 1 - 3F)
+### 3.1 Objective 4: Performance Validation Benchmarks
+
+| Item Count | Total Latency (ms) | Avg Latency / Item (ms) | Memory Delta (KB) | Total SQL Statements |
+| :--- | :--- | :--- | :--- | :--- |
+| **10 Items** | `5.72 ms` | `0.572 ms` | `52.70 KB` | `41` |
+| **50 Items** | `7.66 ms` | `0.153 ms` | `112.14 KB` | `201` |
+| **100 Items** | `11.41 ms` | `0.114 ms` | `103.34 KB` | `401` |
+| **500 Items** | `51.94 ms` | `0.104 ms` | `0.00 KB` | `2001` |
+
+### 3.2 Objective 2 & 3: Integration & Reconciliation Test Results
+
+- **Unit Test Suite**: `7 / 7 PASSED (100%)`
+- **Integration Test Suite**: `8 / 8 PASSED (100%)`
+- **Inventory Reconciliation Audit**: `VERIFIED (inventory.quantity_grams === SUM(active batches.remaining_grams))`
+- **Build Verification (`npm run build`)**: `CLEAN SUCCESS (0 Errors)`
+- **Lint Verification (`npm run lint`)**: `CLEAN SUCCESS (0 Errors)`
+
+### 3.3 Phase 4A: Andaaza Intelligence Engine Benchmark & Test Results
+
+Benchmarked via `scripts/run_phase4a_tests.js` using an in-memory `.from()` mock (`mockSupabaseTable.js`) so results reflect learning-engine compute cost, isolated from network/database I/O latency (which is environment-dependent and out of scope for a code-level benchmark):
+
+| Item Count | Total Latency (ms) | Avg Latency / Item (ms) | Memory Delta (KB) | Profiles Updated |
+| :--- | :--- | :--- | :--- | :--- |
+| **10 Items** | `0.90 ms` | `0.090 ms` | `125.50 KB` | `10` |
+| **50 Items** | `8.61 ms` | `0.172 ms` | `862.73 KB` | `50` |
+| **100 Items** | `17.63 ms` | `0.176 ms` | `0.00 KB` | `100` |
+| **500 Items** | `130.40 ms` | `0.261 ms` | `4865.34 KB` | `500` |
+
+- **Phase 4A Intelligence Test Suite**: `7 / 7 PASSED (100%)` — deterministic confidence convergence, consumption velocity/interval math, brand preference evolution, depletion/low-stock prediction, pantry health score, household intelligence aggregation, and non-blocking post-commit execution (asserts `commitBill()` returns in <50ms regardless of learning engine work, then verifies the learned profile was written after the async hook settles).
+- **Combined Phase 3H + 4A Suite Total**: `22 / 22 PASSED (100%)` (`BillPersistenceService.test.js` + `Phase3HIntegration.test.js` + `AndaazaIntelligence.test.js`).
+- **Non-blocking verification**: `commitBill()` resolves before `AndaazaLearningEngine.processPostCommitLearning()` executes — measured directly in Test 7 of `AndaazaIntelligence.test.js` rather than only asserted structurally.
+- **Build Verification (`npm run build`)**: `CLEAN SUCCESS (0 Errors)`
+- **Lint Verification (`npm run lint`)**: `CLEAN SUCCESS (0 Errors)`
+
+---
+
+## 4. Feature Matrix: Completed vs. Pending
+
+### 4.1 Completed Milestones (Phases 1 - 4A)
 - [x] **Phase 1: Multi-Tenant Database & RLS**
-  - Database schema for households, members, preferences, inventory, and meal logs (`0001_initial_schema.sql`, `0002_custom_items.sql`, `0003_tiffin_schema.sql`).
-  - PostgreSQL `auth_household_id()` security definer function and RLS policies on all tables.
 - [x] **Phase 2: Core Domain Services & OCR Engine**
-  - Receipt image scanning via Gemini 2.5 Flash API (`OCRService.js`).
-  - Ingredient alias matching with confidence scores (`IngredientMatchingService.js`).
-  - Non-persisting processing pipeline orchestrator (`BillProcessingOrchestrator.js`).
 - [x] **Phase 3F: ScanBill Review UI Integration**
-  - Refactored `ScanBill.jsx` to consume `useBillProcessing()` hook.
-  - Interactive line item review UI with in-memory editing of merchant, date, quantities, units, prices, and categories.
-  - Zero database writes during scanning and review.
+- [x] **Phase 3G: Atomic Stock Deduction RPC & Bill Persistence**
+- [x] **Phase 3H: E2E Integration, Production Hardening & AI Observation Foundation**
+  - Full end-to-end UI integration from bill photo upload to atomic database persistence.
+  - Inventory reconciliation verification utility (`verifyInventoryReconciliation`).
+  - Structured telemetry logging (`logger.logCommitTelemetry`).
+  - AI Observation Foundation service (`AIObservationService.js`).
+  - Automated integration test suite (`Phase3HIntegration.test.js`).
+  - Performance benchmarking for 10, 50, 100, 500 items.
+- [x] **Phase 4A: Andaaza Intelligence Engine (Household Learning & Consumption Modeling)**
+  - Append-only purchase event ledger (`purchase_patterns`) and derived `ingredient_consumption_profile`, `prediction_cache`, `household_learning_profile` tables with RLS (`0005_andaaza_intelligence_schema.sql`).
+  - Deterministic consumption velocity, purchase interval, brand preference, and confidence-score calculation (`ConsumptionProfileService.js`).
+  - Depletion date, low-stock risk, and pantry health score prediction algorithms (`PredictionService.js`).
+  - Household-wide pantry diversity, category trend, and shopping cadence aggregation (`HouseholdIntelligenceService.js`).
+  - Asynchronous, non-blocking learning orchestrator invoked post-commit (`AndaazaLearningEngine.js`) — verified never to delay `commitBill()`.
+  - Read-only prediction/profile APIs (`getIngredientProfile`, `getHouseholdProfile`, `getHouseholdPredictions`) — no recommendation, meal-planning, or UI logic included (explicitly out of scope).
+  - Automated test suite (`AndaazaIntelligence.test.js`, 7/7 passing) and dedicated benchmark harness with an in-memory Supabase mock for network-independent performance measurement.
+  - See [07_ANDAAZA_AI_LEARNING_ENGINE.md §6-11](./07_ANDAAZA_AI_LEARNING_ENGINE.md) for the full architecture review and [12_API_AND_SERVICES_CATALOGUE.md §2.12-2.16](./12_API_AND_SERVICES_CATALOGUE.md) for API contracts.
 
-### 3.2 Pending Engineering Milestones
+### 4.2 Next Engineering Milestones
 
-#### Next Up: Phase 3G — PostgreSQL RPC `commit_scanned_bill()`
-* **Goal**: Implement `commit_scanned_bill(p_payload jsonb)` stored procedure in Supabase.
-* **Responsibilities**:
-  - Idempotency verification (`idempotency_key`).
-  - Atomic inventory upsert (`INSERT ... ON CONFLICT (household_id, canonical_name) DO UPDATE SET quantity_grams = inventory.quantity_grams + EXCLUDED.quantity_grams`).
-  - Batch creation (`inventory_batches`) and audit logging (`inventory_transactions`).
-  - Non-blocking post-commit AI observation logging hook.
-
-#### Phase 4: Automated Recipe Deductions & Andaaza Machine Calibration
+#### Phase 4B: Recipe Engine & Automated Meal Stock Deductions
 * **Goal**: Automatically deduct ingredient stock when meal logs transition to `cooked`.
-* **Andaaza Calibration**: Update `andaaza_profile` volumetric weights based on feedback.
+* **Andaaza Volumetric Calibration**: Dynamic calibration of `andaaza_profile` volumetric weights based on cooking feedback over time (distinct from the Phase 4A consumption-learning engine — see [07_ANDAAZA_AI_LEARNING_ENGINE.md](./07_ANDAAZA_AI_LEARNING_ENGINE.md) note at the top of the Phase 4A section).
+* **Recommendation layer** (future, not 4A): recipe suggestions, shopping list generation, and budget dashboards can now be built on top of the Phase 4A intelligence tables without further schema changes.
 
 #### Phase 5: Monthly Budget & Financial Analytics Dashboard
 * **Goal**: Aggregate bill totals and category expenditures into `budget_monthly`.
-* **Insights**: Provide visual breakdowns of home grocery vs restaurant spend.

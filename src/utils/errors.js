@@ -31,7 +31,7 @@ export function normalizeError(err, defaultCode = 'UNKNOWN_ERROR') {
   if (err && typeof err === 'object') {
     const message = err.message || err.error_description || err.details || 'An unexpected error occurred.'
     const status = err.status || err.statusCode || null
-    const code = err.code || defaultCode
+    const code = defaultCode !== 'UNKNOWN_ERROR' ? defaultCode : (err.code || defaultCode)
     return new AppError(message, code, status, err)
   }
 
