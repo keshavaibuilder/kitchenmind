@@ -33,10 +33,24 @@ export function formatCurrency(amount) {
 
 /**
  * Capitalizes the first letter of a string
- * @param {string} str 
+ * @param {string} str
  * @returns {string}
  */
 export function capitalize(str) {
   if (!str) return ''
   return str.charAt(0).toUpperCase() + str.slice(1)
+}
+
+/**
+ * Formats a gram quantity for display, switching to kg above 1000g.
+ * @param {number} grams
+ * @returns {string}
+ */
+export function formatGrams(grams) {
+  const g = Number(grams) || 0
+  if (g >= 1000) {
+    const kg = g / 1000
+    return `${Number.isInteger(kg) ? kg : kg.toFixed(1)}kg`
+  }
+  return `${Math.round(g)}g`
 }

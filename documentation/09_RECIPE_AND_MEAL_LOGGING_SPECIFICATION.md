@@ -258,8 +258,103 @@ Mirrors `commit_scanned_bill()`'s (0004) architecture rather than the `Service -
 - **Partial stock**: never fails the whole call — deducts what's available, reports `shortfall_grams`/`out_of_stock` per ingredient, and still marks the meal cooked (matches §4.1's `COOKED` row: the deduction is a side effect of cooking, not a precondition for it).
 - **Security**: same hardening as `commit_scanned_bill` post-review — unconditional membership check (not skipped for `auth.uid() IS NULL`), `SET search_path = public, pg_temp`, `EXECUTE` revoked from `PUBLIC` and granted only to `authenticated`.
 
-### 7.3 Not yet implemented
+### 7.3 Not yet implemented (as of Phase 4B)
 
 - No UI: `/meals` and `/recipe/:id` routes remain `<Soon>` placeholders in `App.jsx`. `RecipeService`, `MealLogService`, and `rotiCalculator` are backend/logic-layer only, unit-tested via `Phase4BMealDeduction.test.js`, not yet wired to any page.
 - `$M_{andaaza}$` (the household historical multiplier) defaults to `1.0` in `calculateRotiRequirement` — `AndaazaLearningService.js` (the volumetric calibration service referenced in §2 of `07_ANDAAZA_AI_LEARNING_ENGINE.md`) is still an unimplemented stub, so there is no learned value to feed in yet.
 - Global recipe seed data does not exist — `recipes` has no rows until either a seed migration or the (not-yet-built) custom recipe creation UI populates it.
+
+> **Phase 4C resolved the first and third bullets** — the Recipe Workspace UI now exists and migration `0007` seeds 8 global recipes. The `$M_{andaaza}$` gap is still open; see §8.6.
+
+---
+
+## 8. Phase 4C — Recipe Workspace (UI Architecture)
+
+### 8.1 Routing & Page Map
+
+| Route | Page | Purpose |
+| :--- | :--- | :--- |
+| `/recipes` | `RecipeLibrary.jsx` | Browse/search/filter global + household recipes; Browse / Favorites / Recently Cooked tabs |
+| `/recipe/:id` | `RecipeDetail.jsx` | Recipe info, base-serving ingredient list, cooking history, entry point to the cook workflow |
+| `/recipes/new`, `/recipes/:id/edit` | `RecipeEditor.jsx` | Create / edit a household custom recipe (same component, mode inferred from the presence of `:id`) |
+| `/meals/history` | `MealHistory.jsx` | Cooked meal log, most recent first, expandable per-ingredient deduction detail |
+
+`BottomNav`'s "Meals" tab now opens `/recipes` (the Recipe Workspace is the app's central cooking experience, per this phase's brief) — `/meals` itself stays reserved as a `<Soon>` placeholder for a future meal-planner calendar (explicitly out of scope for 4C). `RecipeDetail`'s route stayed the pre-existing singular `/recipe/:id` rather than moving to a new path.
+
+### 8.2 Component Hierarchy
+
+```
+Pages → Hooks → Services → supabaseClient → PostgreSQL
+```
+
+No page or component calls `supabaseClient` directly — every network access goes through a service method, matching the rest of the codebase.
+
+```
+RecipeLibrary.jsx                    RecipeDetail.jsx                  RecipeEditor.jsx           MealHistory.jsx
+  useRecipes()                         useRecipeById()                   useRecipeById()             useMealHistory()
+  useFavoriteRecipes()                 useRecipeCookingHistory()         useRecipeMutations()         useMealDeductions()
+  useRecentlyCookedRecipes()           useRecipeMutations()
+  ├─ RecipeCard.jsx (×N)               useFavoriteRecipes()
+  └─ InfiniteScrollSentinel.jsx        └─ CookMealFlow.jsx (on demand)
+                                            useCookMeal()
+                                              ├─ ServingScaleSelector.jsx
+                                              ├─ IngredientAvailabilityList.jsx
+                                              └─ InventoryImpactPreview.jsx
+
+Shared: Skeleton.jsx (loading), ErrorBoundary.jsx (mounted once in ProtectedLayout),
+        ToastContainer.jsx (mounted once in ProtectedLayout), useToast.js
+```
+
+`useCookMeal` is deliberately owned by `CookMealFlow`, not `RecipeDetail` — it fetches inventory and household members, so those network calls only happen while the cook sheet is actually open, not on every recipe view.
+
+### 8.3 State Management
+
+- **Server state**: React Query (`@tanstack/react-query`, already a dependency), same pattern as `useInventory`/`useHousehold`. Library pagination uses `useInfiniteQuery`; everything else uses `useQuery`/`useMutation` with `invalidateQueries` on mutation success (e.g. cooking a meal invalidates `['inventory', householdId]`, `['mealHistory']`, `['recentlyCookedRecipeIds', householdId]`).
+- **Local UI state**: plain `useState` in each page/component (search text, active filter tab, serving count, editor form fields) — no global store needed for this.
+- **Favorites**: `localStorage`, keyed per household (`kitchenmind:favoriteRecipes:<household_id>`) via `useFavoriteRecipes()`. **Deliberately not a backend concept** — no `favorites` table exists or was added. This means favorites don't sync across devices and are lost if browser storage is cleared. "Recently Cooked" is *not* the same mechanism — it's derived from real `meal_log` history (`MealLogService.getRecentlyCookedRecipeIds`), so it's accurate and shared across devices.
+- **Toasts**: a small zustand store (`useToast.js`), matching the existing `authStore` pattern rather than introducing a React Context provider for equivalent global state.
+
+### 8.4 Cook Meal Workflow (implementation of docs' original §5 pipeline)
+
+```
+RecipeDetail: "Cook This Recipe" tap
+  → CookMealFlow opens, calls useCookMeal(recipe)
+  → user adjusts servings (ServingScaleSelector) / toggles roti
+  → useCookMeal recomputes: RecipeService.scaleRecipeIngredients() → computeIngredientAvailability()
+    against useInventory()'s live data → IngredientAvailabilityList + InventoryImpactPreview render
+    (read-only projection; nothing is written yet)
+  → user taps "Confirm & Cook"
+  → MealLogService.cookRecipeNow() → createMealLog() then mark_meal_cooked() RPC (FIFO deduction, atomic)
+  → onSuccess: invalidate inventory / meal history / recently-cooked queries, show success step + toast
+  → "Andaaza Learning" / "Kitchen Intelligence Refresh" (from the brief's workflow diagram) already
+    happen automatically: mark_meal_cooked() writes inventory_transactions, and any future purchase
+    that follows still flows through AndaazaLearningEngine (Phase 4A) unaffected. There is no
+    dedicated *cooking-side* learning hook — Phase 4A's engine observes purchases, not consumption;
+    see §8.6 for what that gap would take to close.
+```
+
+A shortfall (partial stock) never blocks this flow — `mark_meal_cooked()` deducts what's available and reports it; the UI shows a warning toast and a shortfall note in the success step, matching the RPC's design (§7.2).
+
+### 8.5 Testing
+
+`npm test` (vitest + `@testing-library/react` + jsdom — added this phase; the repo previously only had Node-script tests for the service layer, no DOM test runner). Coverage:
+
+| File | Covers |
+| :--- | :--- |
+| `utils/__tests__/ingredientAvailability.spec.js` | Available/low/missing classification, case-insensitive matching, `canCookFully` |
+| `hooks/__tests__/useCookMeal.spec.jsx` | Serving-scale recalculation, roti opt-in, `cookRecipeNow` payload, error surfacing |
+| `components/recipes/__tests__/*.spec.jsx` | `ServingScaleSelector`, `IngredientAvailabilityList`, `InventoryImpactPreview`, `CookMealFlow` (full review→confirm→success/shortfall/error workflow, hook mocked) |
+| `pages/__tests__/RecipeLibrary.spec.jsx`, `RecipeDetail.spec.jsx`, `MealHistory.spec.jsx` | Empty states, tab switching, favorite/duplicate/delete actions, expandable history rows |
+| `pages/__tests__/responsiveLayout.spec.jsx` | Regression check that pages keep the codebase's `max-w-md mx-auto` mobile-first container convention |
+
+**Known limitation**: this sandbox has no way to run a real browser (Playwright/Cypress) or a live Supabase project, so there is no true cross-device visual regression testing or end-to-end click-through against real auth — verification here is jsdom + mocked services (real DOM rendering and interaction, not real network/visual). `npm run build`'s module graph resolution and a dev-server module-transform smoke check were used as an additional static check before tests were written.
+
+### 8.6 Known Limitations & Future Enhancements
+
+- **Favorites don't sync across devices** (localStorage-only — see §8.3). A `favorites` table would be a small additive migration if cross-device sync is ever wanted.
+- **No image hosting** — recipes can store `image_url`, but nothing in this phase uploads or hosts images; seeded/created recipes without one show a category emoji instead. `RecipeCard`/`RecipeDetail` already use `loading="lazy"` and a graceful fallback, so wiring in real image upload later needs no component changes.
+- **No virtualized list** — the Library uses `useInfiniteQuery` + an `IntersectionObserver` sentinel (`InfiniteScrollSentinel.jsx`) rather than a windowing library (no virtualization dependency existed in this repo, and recipe catalogues are not expected to reach a size where DOM node count becomes the bottleneck). Worth revisiting if a household's combined global+custom catalogue grows into the thousands.
+- **`$M_{andaaza}$` is still always `1.0`** in the roti calculation — depends on the still-unimplemented `AndaazaLearningService.js` (volumetric calibration, distinct from Phase 4A's `AndaazaLearningEngine`).
+- **Cooking does not feed back into Phase 4A's consumption model** — `AndaazaLearningEngine.processPostCommitLearning()` only runs on bill commits (purchases). A household that cooks frequently but buys rarely won't see that reflected in `consumption_velocity_g_per_day` from cooking alone. Closing this would mean deciding whether `mark_meal_cooked()` should also trigger (a variant of) the Phase 4A learning hook — a deliberate design question for a future phase, not a bug in this one.
+- **Nutrition info and average rating are UI placeholders**, as explicitly scoped — no nutrition data source or rating system exists.
+- **`recipes.tags`** is stored and seeded but has no filter UI yet (only meal type, cuisine via search, and veg/non-veg are exposed as filters in the Library) — a small addition on top of what's already there.

@@ -4,7 +4,7 @@
 
 ## 1. Executive Implementation Overview
 
-KitchenMind is being developed in a structured 5-phase evolution. Phases 1 through 4A are committed and tagged (`v0.4.0-intelligence-foundation`, following an independent architecture/code review — see §3.4). The system now sits at **Phase 4B Core Backend Complete** (Recipe Engine & Automated Meal Stock Deduction — atomic FIFO deduction RPC, recipe/meal services, and roti calculation are implemented and tested; UI wiring is not yet started, see §4.2).
+KitchenMind is being developed in a structured 5-phase evolution. Phases 1 through 4A are committed and tagged `v0.4.0-intelligence-foundation` (following an independent architecture/code review — see §3.4); Phase 4B (recipe/meal backend) is committed and tagged `v0.4.1-recipe-backend`. The system now sits at **Phase 4C Complete** (Recipe Workspace UI — recipe library, detail, editor, and meal history pages, and the full cook-meal workflow, wired end-to-end onto the Phase 4B backend; see §4.2 for what's still explicitly deferred, e.g. the meal-planner calendar).
 
 ```mermaid
 gantt
@@ -24,7 +24,7 @@ gantt
     Andaaza Intelligence Engine (4A)    :done,    p8, 2026-08-06, 2026-08-06
     Independent Review & v0.4.0 Tag     :done,    p8b, 2026-08-06, 2026-08-06
     Meal Deduction Backend Core (4B)    :done,    p9, 2026-08-06, 2026-08-06
-    Recipe/Meal UI Wiring (4B)          :active,  p9b, 2026-08-07, 2026-08-21
+    Recipe Workspace UI (4C)            :done,    p9b, 2026-08-06, 2026-08-06
     Andaaza Volumetric Calibration      :         p10, 2026-09-30, 2026-10-31
     section Phase 5: Financial Analytics
     Monthly Budget & Spend Insights     :        p11, 2026-11-01, 2026-12-15
@@ -67,10 +67,30 @@ The table below provides a comprehensive audit of all frontend pages, components
 | `supabase/migrations/0004_rpc_commit_scanned_bill.sql` | Database RPC | **Completed (Phase 3G)**, hardened post-review | PostgreSQL atomic commit stored procedure with race-free idempotency, unconditional auth check, pinned `search_path`, anon-role EXECUTE revoked |
 | `supabase/migrations/0005_andaaza_intelligence_schema.sql` | Database Schema | **Completed (Phase 4A)** | `ingredient_consumption_profile`, `purchase_patterns`, `prediction_cache`, `household_learning_profile` tables + RLS |
 | [`src/utils/units.js`](file:///mnt/c/Users/keysh/github/kitchenmind/src/utils/units.js) | Utility | **Completed** | Single source of truth for quantity→grams conversion (was duplicated across two files pre-review) |
-| [`src/services/RecipeService.js`](file:///mnt/c/Users/keysh/github/kitchenmind/src/services/RecipeService.js) | Data Service | **Backend Complete (Phase 4B)** | Global + household custom recipe CRUD, ingredient scaling |
-| [`src/services/MealLogService.js`](file:///mnt/c/Users/keysh/github/kitchenmind/src/services/MealLogService.js) | Data Service | **Backend Complete (Phase 4B)** | Meal lifecycle CRUD, atomic FIFO stock deduction via `mark_meal_cooked()` |
+| [`src/services/RecipeService.js`](file:///mnt/c/Users/keysh/github/kitchenmind/src/services/RecipeService.js) | Data Service | **Completed (Phase 4B, extended 4C)** | Global + household custom recipe CRUD, pagination/search/filters, ingredient scaling |
+| [`src/services/MealLogService.js`](file:///mnt/c/Users/keysh/github/kitchenmind/src/services/MealLogService.js) | Data Service | **Completed (Phase 4B, extended 4C)** | Meal lifecycle CRUD, atomic FIFO stock deduction via `mark_meal_cooked()`, meal history, recently-cooked |
 | [`src/utils/rotiCalculator.js`](file:///mnt/c/Users/keysh/github/kitchenmind/src/utils/rotiCalculator.js) | Utility | **Completed (Phase 4B)** | Flour/dough requirement calculation from real household/member/guest schema |
 | `supabase/migrations/0006_recipe_meal_deduction_schema.sql` | Database Schema + RPC | **Completed (Phase 4B)** | Household-owned custom recipes + RLS, `meal_log.cooked_at`, `stock_deductions.batch_id`, atomic FIFO `mark_meal_cooked()` RPC |
+| `supabase/migrations/0007_recipe_workspace_metadata.sql` | Database Schema | **Completed (Phase 4C)** | Discovered-defect fix: `recipes.image_url/description/prep_time_mins/cook_time_mins/difficulty/is_vegetarian/tags` (missing fields the UI needed); 8-recipe starter seed |
+| [`src/pages/RecipeLibrary.jsx`](file:///mnt/c/Users/keysh/github/kitchenmind/src/pages/RecipeLibrary.jsx) | Page View | **Completed (Phase 4C)** | Search, meal-type/veg filters, Browse/Favorites/Recently-Cooked tabs, infinite scroll, empty states |
+| [`src/pages/RecipeDetail.jsx`](file:///mnt/c/Users/keysh/github/kitchenmind/src/pages/RecipeDetail.jsx) | Page View | **Completed (Phase 4C)** | Recipe info, base ingredients, cooking history, favorite/duplicate/edit/delete, launches cook flow |
+| [`src/pages/RecipeEditor.jsx`](file:///mnt/c/Users/keysh/github/kitchenmind/src/pages/RecipeEditor.jsx) | Page View | **Completed (Phase 4C)** | Create/edit custom recipes — ingredient picker, unit picker, validation |
+| [`src/pages/MealHistory.jsx`](file:///mnt/c/Users/keysh/github/kitchenmind/src/pages/MealHistory.jsx) | Page View | **Completed (Phase 4C)** | Cooked meal log, expandable per-ingredient deduction detail, infinite scroll |
+| [`src/components/recipes/RecipeCard.jsx`](file:///mnt/c/Users/keysh/github/kitchenmind/src/components/recipes/RecipeCard.jsx) | Component | **Completed (Phase 4C)** | Library grid card — image/emoji, veg/time/difficulty badges, favorite toggle |
+| [`src/components/recipes/ServingScaleSelector.jsx`](file:///mnt/c/Users/keysh/github/kitchenmind/src/components/recipes/ServingScaleSelector.jsx) | Component | **Completed (Phase 4C)** | 1/2/4/6/8 + custom serving presets |
+| [`src/components/recipes/IngredientAvailabilityList.jsx`](file:///mnt/c/Users/keysh/github/kitchenmind/src/components/recipes/IngredientAvailabilityList.jsx) | Component | **Completed (Phase 4C)** | ✓/⚠/✕ availability rows with required/available/shortfall |
+| [`src/components/recipes/InventoryImpactPreview.jsx`](file:///mnt/c/Users/keysh/github/kitchenmind/src/components/recipes/InventoryImpactPreview.jsx) | Component | **Completed (Phase 4C)** | Before → after stock preview, read-only until confirmed |
+| [`src/components/recipes/CookMealFlow.jsx`](file:///mnt/c/Users/keysh/github/kitchenmind/src/components/recipes/CookMealFlow.jsx) | Component | **Completed (Phase 4C)** | Review → confirm → `mark_meal_cooked()` → success/shortfall workflow sheet |
+| [`src/components/InfiniteScrollSentinel.jsx`](file:///mnt/c/Users/keysh/github/kitchenmind/src/components/InfiniteScrollSentinel.jsx) | Component | **Completed (Phase 4C)** | `IntersectionObserver`-based pagination trigger (no virtualization dependency) |
+| [`src/components/ErrorBoundary.jsx`](file:///mnt/c/Users/keysh/github/kitchenmind/src/components/ErrorBoundary.jsx) | Component | **Completed (Phase 4C)** | Retry-capable error boundary, mounted once in `ProtectedLayout` |
+| [`src/components/ToastContainer.jsx`](file:///mnt/c/Users/keysh/github/kitchenmind/src/components/ToastContainer.jsx) | Component | **Completed (Phase 4C)** | Renders the `useToast` queue, mounted once in `ProtectedLayout` |
+| [`src/components/Skeleton.jsx`](file:///mnt/c/Users/keysh/github/kitchenmind/src/components/Skeleton.jsx) | Component | **Completed (Phase 4C)** | Loading skeletons for the Library grid and Recipe Detail |
+| [`src/hooks/useRecipes.js`](file:///mnt/c/Users/keysh/github/kitchenmind/src/hooks/useRecipes.js) | Custom Hook | **Completed (Phase 4C)** | `useRecipes` (paginated), `useFavoriteRecipes`, `useRecentlyCookedRecipes`, `useRecipeById`, `useRecipeMutations` |
+| [`src/hooks/useCookMeal.js`](file:///mnt/c/Users/keysh/github/kitchenmind/src/hooks/useCookMeal.js) | Custom Hook | **Completed (Phase 4C)** | Orchestrates scale → availability → impact → `cookRecipeNow`, owns inventory/members fetches |
+| [`src/hooks/useMealHistory.js`](file:///mnt/c/Users/keysh/github/kitchenmind/src/hooks/useMealHistory.js) | Custom Hook | **Completed (Phase 4C)** | `useMealHistory` (paginated), `useMealDeductions`, `useRecipeCookingHistory` |
+| [`src/hooks/useToast.js`](file:///mnt/c/Users/keysh/github/kitchenmind/src/hooks/useToast.js) | Custom Hook | **Completed (Phase 4C)** | Zustand-backed global toast queue |
+| [`src/utils/ingredientAvailability.js`](file:///mnt/c/Users/keysh/github/kitchenmind/src/utils/ingredientAvailability.js) | Utility | **Completed (Phase 4C)** | Pure available/low/missing computation against live inventory |
+| [`src/config/ingredients.js`](file:///mnt/c/Users/keysh/github/kitchenmind/src/config/ingredients.js) | Config | **Completed (Phase 4C)** | Curated ingredient list, extracted from `AddItem.jsx` so its canonical names stay the single source of truth shared with the Recipe Editor's ingredient picker |
 
 ---
 
@@ -137,11 +157,34 @@ A fresh, context-free review agent audited all Phase 3G/3H/4A changes against do
 - **Build Verification (`npm run build`)**: `CLEAN SUCCESS (0 Errors)`
 - **Lint Verification (`npm run lint`)**: `CLEAN SUCCESS (0 Errors)`
 
+### 3.6 Phase 4C: Recipe Workspace UI Test Results
+
+`npm test` (vitest 2.1.9 + `@testing-library/react` + jsdom, added this phase): **49 / 49 PASSED (100%)** across 10 spec files.
+
+| Layer | Spec file | What it verifies |
+| :--- | :--- | :--- |
+| Pure logic | `utils/__tests__/ingredientAvailability.spec.js` | Available/low/missing classification, case-insensitive matching, `canCookFully` |
+| Hook | `hooks/__tests__/useCookMeal.spec.jsx` | Serving-scale recalculation, roti opt-in, `cookRecipeNow` payload, error surfacing (services mocked, real scaling/availability math) |
+| Component | `components/recipes/__tests__/ServingScaleSelector.spec.jsx` | Preset selection, custom input, 1-50 clamping |
+| Component | `components/recipes/__tests__/IngredientAvailabilityList.spec.jsx` | Per-status rendering, optional-ingredient labeling, empty state |
+| Component | `components/recipes/__tests__/InventoryImpactPreview.spec.jsx` | Required/remaining figures in g and kg, empty-list rendering |
+| Workflow | `components/recipes/__tests__/CookMealFlow.spec.jsx` | Full review → confirm → success workflow, shortfall warning, error + retry, dismiss (hook mocked, sheet's own step logic under real test) |
+| Page | `pages/__tests__/RecipeLibrary.spec.jsx` | Loading skeleton, tab switching, empty states, favorite recipes rendering |
+| Page | `pages/__tests__/RecipeDetail.spec.jsx` | Info rendering, cook-flow launch, retry-on-error, favorite toggle, ownership-gated Edit/Delete, delete confirmation |
+| Page | `pages/__tests__/MealHistory.spec.jsx` | List rendering, empty/error states, expand/collapse deduction detail |
+| Regression | `pages/__tests__/responsiveLayout.spec.jsx` | `max-w-md mx-auto` mobile-first container convention held on new pages; base grid is 2-column |
+
+**Known limitations**:
+- No real browser (Playwright/Cypress) or live Supabase project in this sandbox — no true cross-device visual regression or end-to-end click-through against real auth. Verification is real DOM rendering + interaction (jsdom) against mocked services, plus a `npm run build` module-graph check and a dev-server module-transform smoke check.
+- `vitest run` takes ~150-200s in this environment specifically because of slow first-run jsdom/dependency I/O on a WSL2 `/mnt/c` (Windows-filesystem) mount — `vitest.config.js` pins `pool: 'forks'` with `singleFork: true` because the default multi-worker pool hung indefinitely here (10+ spawned processes, none completing); this is a sandbox-specific workaround, safe to revert in a normal CI/dev environment.
+- **Build Verification (`npm run build`)**: `CLEAN SUCCESS (0 Errors)`
+- **Lint Verification (`npm run lint`)**: `CLEAN SUCCESS (0 Errors)`
+
 ---
 
 ## 4. Feature Matrix: Completed vs. Pending
 
-### 4.1 Completed Milestones (Phases 1 - 4B core)
+### 4.1 Completed Milestones (Phases 1 - 4C)
 - [x] **Phase 1: Multi-Tenant Database & RLS**
 - [x] **Phase 2: Core Domain Services & OCR Engine**
 - [x] **Phase 3F: ScanBill Review UI Integration**
@@ -169,12 +212,22 @@ A fresh, context-free review agent audited all Phase 3G/3H/4A changes against do
   - `RecipeService.js` (recipe CRUD + ingredient scaling), `MealLogService.js` (meal lifecycle + deduction), `rotiCalculator.js` (flour/dough requirement).
   - Automated test suite (`Phase4BMealDeduction.test.js`, 8/8 passing).
   - See [09_RECIPE_AND_MEAL_LOGGING_SPECIFICATION.md §7](./09_RECIPE_AND_MEAL_LOGGING_SPECIFICATION.md) for how this reconciles with the original design doc, and [12_API_AND_SERVICES_CATALOGUE.md §2.9, §2.17-2.18](./12_API_AND_SERVICES_CATALOGUE.md) for API contracts.
+- [x] **Phase 4B backend committed & tagged `v0.4.1-recipe-backend`**
+- [x] **Phase 4C: Recipe Workspace (UI)**
+  - Recipe Library (`/recipes`): search, meal-type/veg filters, Browse/Favorites/Recently-Cooked tabs, infinite scroll, empty states.
+  - Recipe Detail (`/recipe/:id`): info, base-serving ingredients, cooking history, favorite/duplicate/edit/delete.
+  - Recipe Editor (`/recipes/new`, `/recipes/:id/edit`): create/edit custom recipes with an ingredient + unit picker and validation.
+  - Meal History (`/meals/history`): cooked meal log with expandable per-ingredient deduction detail.
+  - Cook Meal workflow (`CookMealFlow.jsx` + `useCookMeal.js`): serving scale → live ingredient availability against real inventory → inventory impact preview → `mark_meal_cooked()` → success/shortfall confirmation, fully non-destructive until confirmed.
+  - Discovered-defect fix: `recipes` table was missing `image_url`/`description`/`prep_time_mins`/`cook_time_mins`/`difficulty`/`is_vegetarian`/`tags` — added additively in migration `0007`, which also seeds 8 global recipes.
+  - Toast notifications, retry-capable error boundary, skeleton loaders, `IntersectionObserver`-based infinite scroll (no new UI/virtualization dependency).
+  - `npm test` (vitest + `@testing-library/react` + jsdom, added this phase — the repo previously had no DOM test runner): 49/49 tests passing across pure-function, hook, component, and page-level specs.
+  - See [09_RECIPE_AND_MEAL_LOGGING_SPECIFICATION.md §8](./09_RECIPE_AND_MEAL_LOGGING_SPECIFICATION.md) for UI architecture, component hierarchy, state management, and known limitations; [12_API_AND_SERVICES_CATALOGUE.md §2.9, §2.17](./12_API_AND_SERVICES_CATALOGUE.md) for the extended service contracts.
 
 ### 4.2 Next Engineering Milestones
 
-#### Phase 4B (remaining): Recipe & Meal Logging UI
-* **Goal**: Wire `RecipeService`/`MealLogService` into the `/meals` and `/recipe/:id` routes (currently `<Soon>` placeholders in `App.jsx`) — meal planning calendar, "mark as cooked" action, recipe browsing/creation UI.
-* Not started this session — backend/logic layer only, per the same UI-deferred scoping Phase 4A used.
+#### Meal Planner Calendar (future)
+* **Goal**: `/meals` (currently a `<Soon>` placeholder) — a calendar view for planning meals ahead, distinct from the Recipe Workspace's browse-and-cook-now flow. Explicitly out of scope for 4C.
 
 #### Andaaza Volumetric Calibration
 * **Goal**: Implement `AndaazaLearningService.js` (currently an empty stub) — dynamic calibration of `andaaza_profile` volumetric weights based on cooking feedback over time (distinct from the Phase 4A consumption-learning engine — see [07_ANDAAZA_AI_LEARNING_ENGINE.md](./07_ANDAAZA_AI_LEARNING_ENGINE.md) note at the top of the Phase 4A section). Feeds `rotiCalculator`'s `andaazaFactor` parameter, which defaults to `1.0` until this exists.

@@ -2,6 +2,8 @@ import { Routes, Route, Navigate, Outlet } from 'react-router-dom'
 import { useAuth }   from './hooks/useAuth'
 import useAuthStore  from './store/authStore'
 import BottomNav     from './components/BottomNav'
+import ToastContainer from './components/ToastContainer'
+import ErrorBoundary  from './components/ErrorBoundary'
 
 import Login         from './pages/Login'
 import AuthCallback  from './pages/AuthCallback'
@@ -10,6 +12,10 @@ import Onboarding    from './pages/Onboarding'
 import ScanBill      from './pages/ScanBill'
 import Inventory     from './pages/Inventory'
 import AddItem       from './pages/AddItem'
+import RecipeLibrary from './pages/RecipeLibrary'
+import RecipeDetail  from './pages/RecipeDetail'
+import RecipeEditor  from './pages/RecipeEditor'
+import MealHistory   from './pages/MealHistory'
 
 const Soon = ({ name }) => (
   <div className="min-h-screen bg-[#F5F7FA] flex items-center justify-center text-gray-400">
@@ -36,8 +42,11 @@ function ProtectedLayout() {
 
   return (
     <div className="pb-16">   {/* space for fixed bottom nav */}
-      <Outlet />
+      <ErrorBoundary>
+        <Outlet />
+      </ErrorBoundary>
       <BottomNav />
+      <ToastContainer />
     </div>
   )
 }
@@ -70,7 +79,11 @@ function AppRoutes() {
         <Route path="/scan"                element={<ScanBill />} />
         <Route path="/inventory"           element={<Inventory />} />
         <Route path="/meals"               element={<Soon name="Today's Meals" />} />
-        <Route path="/recipe/:id"          element={<Soon name="Recipe Detail" />} />
+        <Route path="/meals/history"       element={<MealHistory />} />
+        <Route path="/recipes"             element={<RecipeLibrary />} />
+        <Route path="/recipes/new"         element={<RecipeEditor />} />
+        <Route path="/recipes/:id/edit"    element={<RecipeEditor />} />
+        <Route path="/recipe/:id"          element={<RecipeDetail />} />
         <Route path="/cook-something-else" element={<Soon name="Cook Something Else" />} />
         <Route path="/household"           element={<Soon name="Household" />} />
         <Route path="/add-guest"           element={<Soon name="Add Guest" />} />

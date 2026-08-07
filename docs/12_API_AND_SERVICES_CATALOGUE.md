@@ -117,6 +117,9 @@ Manages household onboarding, member profiling, role assignments, and dietary pr
 - **Parameters**: `householdId` (string UUID), `preferences` (Object).
 - **Returns**: `Promise<HouseholdObject>`
 
+#### `getMembers(householdId)` (Phase 4C)
+- **Returns**: `Promise<Array<Member>>` — all household members (`role`, `roti_preference`, etc.). Added so `useCookMeal` (Recipe Workspace) can feed `rotiCalculator` without a hook touching `supabaseClient` directly.
+
 ---
 
 ### 2.3 `InventoryService`
@@ -247,27 +250,34 @@ Validates and commits a reviewed bill atomically via the `commit_scanned_bill()`
 
 ---
 
-### 2.9 `RecipeService` (Phase 4B)
+### 2.9 `RecipeService` (Phase 4B, extended Phase 4C)
 
-Global master recipe catalogue (`household_id IS NULL`) plus household-owned custom recipes. `recipes.ingredients` is a jsonb array of `{ canonical_name, base_quantity_grams, is_optional? }` scaled for `base_servings` — see [09_RECIPE_AND_MEAL_LOGGING_SPECIFICATION.md §7](./09_RECIPE_AND_MEAL_LOGGING_SPECIFICATION.md) for why this differs from the originally-designed `recipe_ingredients` join table.
+Global master recipe catalogue (`household_id IS NULL`) plus household-owned custom recipes. `recipes.ingredients` is a jsonb array of `{ canonical_name, base_quantity_grams, is_optional? }` scaled for `base_servings` — see [09_RECIPE_AND_MEAL_LOGGING_SPECIFICATION.md §7](./09_RECIPE_AND_MEAL_LOGGING_SPECIFICATION.md) for why this differs from the originally-designed `recipe_ingredients` join table. Phase 4C added `image_url`, `description`, `prep_time_mins`, `cook_time_mins`, `difficulty`, `is_vegetarian`, `tags` (migration `0007`, see §7.1 there) and the pagination/search/CRUD surface the Recipe Workspace needed.
 
 #### `getRecipes(householdId, filters)`
-- **Parameters**: `householdId` (string UUID), `filters` (`{ mealType?: string, cuisine?: string }`).
-- **Returns**: `Promise<Array<Recipe>>` — global recipes plus this household's own custom recipes.
+- **Parameters**: `householdId` (string UUID), `filters` (`{ mealType?, cuisine?, isVegetarian?: boolean, search?: string, limit?: number, offset?: number }`).
+- **Returns**: `Promise<{ recipes: Array<Recipe>, hasMore: boolean }>` — global recipes plus this household's own custom recipes, one page at a time (default `limit` 20). **Changed in Phase 4C**: previously returned a bare array; now paginated for the Library's infinite scroll.
+
+#### `getRecipesByIds(ids)`
+- **Parameters**: `ids` (`Array<string>`).
+- **Returns**: `Promise<Array<Recipe>>` — resolves in the same order as `ids` (e.g. most-recently-cooked-first). Used by the Favorites and Recently Cooked shelves, which only have IDs to start from.
 
 #### `getRecipeById(recipeId)`
 - **Parameters**: `recipeId` (string UUID).
 - **Returns**: `Promise<Recipe|null>`
 
 #### `createCustomRecipe(householdId, recipePayload)`
-- **Parameters**: `householdId` (string UUID), `recipePayload` (`{ name, meal_type, cuisine?, base_servings, ingredients, instructions? }`).
+- **Parameters**: `householdId` (string UUID), `recipePayload` (`{ name, meal_type, cuisine?, base_servings, ingredients, instructions?, image_url?, description?, prep_time_mins?, cook_time_mins?, difficulty?, is_vegetarian?, tags? }`).
 - **Returns**: `Promise<Recipe>`
+
+#### `updateRecipe(householdId, recipeId, updates)` / `deleteRecipe(householdId, recipeId)` / `duplicateRecipe(householdId, sourceRecipe)`
+- Household-scoped CRUD for custom recipes (RLS already prevents editing global or another household's recipes; `householdId` is passed as defense-in-depth too). `duplicateRecipe` works on any *visible* recipe — global or another household's within what `getRecipes`/RLS already exposes — and creates an editable copy owned by the calling household.
 
 #### `scaleRecipeIngredients(recipe, targetServings)`
 - **Parameters**: `recipe` (Recipe row), `targetServings` (number).
 - **Returns**: `Array<{ canonical_name, quantity_grams, is_optional }>` — pure function, no I/O.
 
-> `searchRecipesByInventory` (inventory-driven recipe matching) is **not implemented** — it's a recommendation-adjacent feature and out of scope for the Phase 4B core deduction pipeline, same as Phase 4A excluded recommendation logic.
+> `searchRecipesByInventory` (inventory-driven recipe matching) is **not implemented** — it's a recommendation-adjacent feature and out of scope for the Phase 4B/4C deduction and browsing pipeline, same as Phase 4A excluded recommendation logic.
 
 ---
 
@@ -390,6 +400,19 @@ Meal lifecycle (`planned` -> `cooked` | `skipped`) and the atomic, FIFO-aware st
 - **Returns**: `Promise<{ success, mealLogId, alreadyCooked, cookedAt, hasShortfall, deductions }>`.
 - **Behavior**: Idempotent — re-calling on an already-cooked meal returns `alreadyCooked: true` without deducting stock again (enforced by the RPC, not just client-side). FIFO-deducts across `inventory_batches` (soonest expiry first); a shortfall never fails the call, it's reported per-ingredient in `deductions`.
 - **Error Behavior**: Throws `AppError` with code `MEAL_COOK_VALIDATION_ERROR` for missing IDs, or `MEAL_COOK_FAILED` if the RPC errors.
+
+#### `cookRecipeNow(householdId, { recipeId, mealType, servings, requiredIngredients })` (Phase 4C)
+- Convenience wrapper for the Recipe Detail "Cook Now" flow: `createMealLog` (status `planned`, `date` = today) followed immediately by `markAsCooked` on the new row. Two separate calls, not one transaction — a `markAsCooked` failure leaves the meal in `planned` rather than losing the cook record or double-deducting.
+- **Returns**: same shape as `markAsCooked`.
+
+#### `getMealHistory(householdId, { limit?, offset?, recipeId? })` (Phase 4C)
+- **Returns**: `Promise<{ mealLogs: Array<MealLog & { recipes: Recipe }>, hasMore: boolean }>` — cooked meals only, most recent first, recipe embedded via a single joined query (avoids N+1). `recipeId` narrows to one recipe's history (Recipe Detail's "Cooking history").
+
+#### `getRecentlyCookedRecipeIds(householdId, limit = 10)` (Phase 4C)
+- **Returns**: `Promise<Array<string>>` — distinct recipe IDs, most-recently-cooked first. Powers the Library's "Recently Cooked" shelf; never throws (degrades to `[]` on failure, logged as a warning).
+
+#### `getStockDeductionsForMeal(mealLogId)` (Phase 4C)
+- **Returns**: `Promise<Array<StockDeduction & { inventory: { canonical_name } }>>` — the ingredient-level FIFO deduction audit trail for one cooked meal, for Meal History's expandable detail row.
 
 ---
 

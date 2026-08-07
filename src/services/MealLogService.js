@@ -70,6 +70,110 @@ export const MealLogService = {
   },
 
   /**
+   * Convenience wrapper for the Recipe Detail "Cook Now" flow: creates a meal_log (status
+   * 'planned') for a recipe cooked right now, then immediately marks it cooked. Two separate
+   * calls, not one transaction — but the intermediate state (a 'planned' meal_log with no
+   * deduction yet) is safe: if markAsCooked fails, the meal simply stays 'planned' rather than
+   * silently losing the cook record or double-deducting.
+   *
+   * @param {string} householdId
+   * @param {{ recipeId: string, mealType: string, servings: number, requiredIngredients: Array }} params
+   * @returns {Promise<{success, mealLogId, alreadyCooked, cookedAt, hasShortfall, deductions}>}
+   */
+  async cookRecipeNow(householdId, { recipeId, mealType, servings, requiredIngredients = [] }) {
+    if (!householdId || !recipeId) throw normalizeError('Missing household_id or recipe_id', 'MEAL_COOK_VALIDATION_ERROR')
+    const mealLog = await this.createMealLog(householdId, {
+      date: new Date().toISOString().slice(0, 10),
+      meal_type: mealType || 'dinner',
+      recipe_id: recipeId,
+      headcount: servings || 1,
+    })
+    return this.markAsCooked(householdId, mealLog.id, requiredIngredients)
+  },
+
+  /**
+   * Cooked meal history, most recent first, with the associated recipe embedded (avoids N+1).
+   * @param {string} householdId
+   * @param {{ limit?: number, offset?: number, recipeId?: string }} [pagination]
+   * @returns {Promise<{ mealLogs: Array<Object>, hasMore: boolean }>}
+   */
+  async getMealHistory(householdId, pagination = {}) {
+    const { limit = 20, offset = 0, recipeId } = pagination
+    if (!householdId) return { mealLogs: [], hasMore: false }
+    try {
+      let query = supabaseClient
+        .from('meal_log')
+        .select('*, recipes(id, name, cuisine, meal_type, image_url)')
+        .eq('household_id', householdId)
+        .eq('status', 'cooked')
+      if (recipeId) query = query.eq('recipe_id', recipeId)
+
+      const { data, error } = await query
+        .order('cooked_at', { ascending: false })
+        .range(offset, offset + limit)
+
+      if (error) throw normalizeError(error, 'MEAL_HISTORY_FETCH_FAILED')
+      const rows = data ?? []
+      const hasMore = rows.length > limit
+      return { mealLogs: hasMore ? rows.slice(0, limit) : rows, hasMore }
+    } catch (err) {
+      throw normalizeError(err, 'MEAL_HISTORY_FETCH_FAILED')
+    }
+  },
+
+  /**
+   * Distinct recipe IDs cooked most recently, for the Library's "Recently cooked" filter.
+   * @param {string} householdId
+   * @param {number} [limit=10]
+   * @returns {Promise<Array<string>>}
+   */
+  async getRecentlyCookedRecipeIds(householdId, limit = 10) {
+    if (!householdId) return []
+    try {
+      const { data, error } = await supabaseClient
+        .from('meal_log')
+        .select('recipe_id')
+        .eq('household_id', householdId)
+        .eq('status', 'cooked')
+        .not('recipe_id', 'is', null)
+        .order('cooked_at', { ascending: false })
+        .limit(limit * 3) // over-fetch to account for repeat recipes before de-duplicating
+
+      if (error) throw normalizeError(error, 'MEAL_HISTORY_FETCH_FAILED')
+      const seen = new Set()
+      for (const row of data ?? []) {
+        seen.add(row.recipe_id)
+        if (seen.size >= limit) break
+      }
+      return Array.from(seen)
+    } catch (err) {
+      logger.warn('Failed to fetch recently cooked recipe ids:', err)
+      return []
+    }
+  },
+
+  /**
+   * Ingredient-level deduction audit trail for a single cooked meal.
+   * @param {string} mealLogId
+   * @returns {Promise<Array<Object>>}
+   */
+  async getStockDeductionsForMeal(mealLogId) {
+    if (!mealLogId) return []
+    try {
+      const { data, error } = await supabaseClient
+        .from('stock_deductions')
+        .select('*, inventory(canonical_name)')
+        .eq('meal_log_id', mealLogId)
+        .order('deducted_at', { ascending: true })
+      if (error) throw normalizeError(error, 'STOCK_DEDUCTIONS_FETCH_FAILED')
+      return data ?? []
+    } catch (err) {
+      logger.warn('Failed to fetch stock deductions for meal:', err)
+      return []
+    }
+  },
+
+  /**
    * Transitions a meal to COOKED and atomically FIFO-deducts each required ingredient via the
    * mark_meal_cooked() RPC. Idempotent: re-calling on an already-cooked meal returns
    * `already_cooked: true` without deducting stock again (enforced server-side, not just here).

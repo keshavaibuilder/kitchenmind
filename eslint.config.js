@@ -31,6 +31,8 @@ export default [
         setInterval: 'readonly',
         clearTimeout: 'readonly',
         clearInterval: 'readonly',
+        IntersectionObserver: 'readonly',
+        localStorage: 'readonly',
       },
     },
     rules: {

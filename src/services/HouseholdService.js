@@ -58,6 +58,23 @@ export const HouseholdService = {
   },
 
   /**
+   * Retrieves all members of a household (used by rotiCalculator for flour requirement scaling).
+   * Type: Simple CRUD
+   * @param {string} householdId
+   * @returns {Promise<Array<Object>>}
+   */
+  async getMembers(householdId) {
+    if (!householdId) return []
+    try {
+      const { data, error } = await supabaseClient.from('members').select('*').eq('household_id', householdId)
+      if (error) throw normalizeError(error, 'MEMBERS_FETCH_FAILED')
+      return data ?? []
+    } catch (err) {
+      throw normalizeError(err, 'MEMBERS_FETCH_FAILED')
+    }
+  },
+
+  /**
    * Retrieves preferences for a household.
    * Type: Simple CRUD
    * @param {string} householdId 
