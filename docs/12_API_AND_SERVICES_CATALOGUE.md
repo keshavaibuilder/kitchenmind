@@ -48,6 +48,23 @@ graph TD
     ConsumptionSvc --> Supabase
     PredictionSvc --> Supabase
     HouseholdIntelSvc --> Supabase
+
+    UI --> Dashboard["useDashboard (Phase 5A)"]
+    Dashboard -->|"reuses, no new logic"| PredictionSvc
+    Dashboard -->|"reuses, no new logic"| HouseholdIntelSvc
+    Dashboard -->|"reuses, no new logic"| ConsumptionSvc
+    Dashboard --> InventoryService
+    Dashboard --> AIObs
+    Dashboard -->|"scaleRecipeIngredients"| RecipeService
+
+    UI --> Planner["usePlanner (Phase 5B)"]
+    Planner --> PlanningEngine["PlanningEngine (pure, no I/O)"]
+    PlanningEngine -->|"reuses"| DashboardInsights["dashboardInsights.js (Phase 5A)"]
+    Planner -->|"getMealLogs / createMealLog"| MealLogService
+    Planner -->|"getPreferences"| HouseholdService
+    Planner --> PredictionSvc
+    Planner --> ConsumptionSvc
+    Planner --> InventoryService
 ```
 
 ---
@@ -124,31 +141,24 @@ Manages household onboarding, member profiling, role assignments, and dietary pr
 
 ### 2.3 `InventoryService`
 
-Handles real-time inventory queries, manual additions, batch management, transaction logging, and FIFO meal deductions.
+Handles real-time inventory queries and manual additions. **Corrected to match the actual implementation** (the previous version of this section described `getInventoryItems`/`addInventoryItem`/`recordTransaction`/`deductForMeal`, none of which exist — FIFO batch deduction actually lives in the `mark_meal_cooked()` RPC via `MealLogService`, §2.17, and purchase-side batch creation lives in `commit_scanned_bill()`, §2.8).
 
-#### `getInventoryItems(householdId, filters)`
-- **Parameters**: `householdId` (string UUID), `filters` (`{ category?: string, status?: string, search?: string }`).
-- **Returns**: `Promise<Array<InventoryItemWithBatches>>`
+#### `getInventory(householdId)`
+- **Returns**: `Promise<Array<InventoryItem>>` — all inventory rows for a household.
 
-#### `addInventoryItem(householdId, itemPayload)`
-- **Parameters**: `householdId` (string UUID), `itemPayload` (`{ name, category, displayUnit, quantity, cost, expiryDate }`).
+#### `getItemByCanonicalName(householdId, canonicalName)`
+- **Returns**: `Promise<{ id, quantity_grams, canonical_name }|null>`
+
+#### `addOrUpdateItem(householdId, { label, canonical, category, gramsToStore, displayUnit, threshold })`
+- Upserts by canonical name (manual entry path, e.g. `AddItem.jsx`) — adds to `quantity_grams` if the item exists, inserts otherwise. Does **not** create an `inventory_batches` row (only `commit_scanned_bill()` does), so manually-added stock has no FIFO/expiry batch trail.
 - **Returns**: `Promise<InventoryItem>`
 
-#### `updateInventoryItem(itemId, updates)`
-- **Parameters**: `itemId` (string UUID), `updates` (Object).
-- **Returns**: `Promise<InventoryItem>`
+#### `updateItem(itemId, updates)` / `deleteItem(itemId)`
+- Direct row update/delete by `inventory.id`.
 
-#### `deleteInventoryItem(itemId)`
-- **Parameters**: `itemId` (string UUID).
-- **Returns**: `Promise<{ success: boolean }>`
-
-#### `recordTransaction(transactionPayload)`
-- **Parameters**: `transactionPayload` (`{ householdId, inventoryItemId, batchId, type, quantityChangeBase, notes }`).
-- **Returns**: `Promise<TransactionRecord>`
-
-#### `deductForMeal(householdId, recipeIngredients, servingsMultiplier)`
-- **Parameters**: `householdId` (string UUID), `recipeIngredients` (Array), `servingsMultiplier` (number).
-- **Returns**: `Promise<{ success: boolean, deductedItems: Array, warnings: Array }>`
+#### `getExpiringBatches(householdId, { withinDays = 7 })` (Phase 5A)
+- **Returns**: `Promise<Array<{ id, remaining_grams, expiry_date, purchase_date, status, inventory: { canonical_name, category } }>>` — active batches with a non-null `expiry_date` within the window, one joined query (not one per item), soonest-expiring first.
+- **Known limitation**: no code path sets `inventory_batches.expiry_date` yet (see [07_ANDAAZA_AI_LEARNING_ENGINE.md §13](./07_ANDAAZA_AI_LEARNING_ENGINE.md)), so this legitimately returns `[]` today — the query is correct and will surface real data once OCR expiry extraction or a manual-entry UI exists.
 
 ---
 
@@ -320,7 +330,10 @@ Foundation service for generating discrete, fact-based AI observations from a co
 
 #### `recordPostCommitObservations(householdId, activeItems)`
 - **Parameters**: `householdId` (string UUID), `activeItems` (Array).
-- **Returns**: `Promise<{ success: boolean, observationsCount: number, observations?: Array, error?: string }>` — fetches current inventory, delegates to `generateObservations`, and never throws (errors are caught and logged).
+- **Returns**: `Promise<{ success: boolean, observationsCount: number, observations?: Array, error?: string }>` — fetches current inventory, delegates to `generateObservations`, persists the results to `ai_observations` (Phase 5A — see [07_ANDAAZA_AI_LEARNING_ENGINE.md §12](./07_ANDAAZA_AI_LEARNING_ENGINE.md)), and never throws (errors are caught and logged).
+
+#### `getRecentObservations(householdId, limit = 20)` (Phase 5A)
+- **Returns**: `Promise<Array<AiObservation>>` — one aggregated query against `ai_observations`, most recent first. Feeds the Kitchen Intelligence Dashboard's Observation Timeline.
 
 ---
 
@@ -347,6 +360,9 @@ Calculates ingredient-level consumption statistics. Core calculation is a pure f
 #### `getIngredientProfile(householdId, canonicalName)`
 - **Parameters**: `householdId` (string UUID), `canonicalName` (string).
 - **Returns**: `Promise<IngredientConsumptionProfile|null>` — read-only API; returns `null` (with a logged warning) on fetch failure rather than throwing.
+
+#### `getAllProfiles(householdId)` (Phase 5A)
+- **Returns**: `Promise<Array<IngredientConsumptionProfile>>` — every profile for a household in one query, used by the dashboard (Shopping Intelligence, Pantry Insights) instead of calling `getIngredientProfile` per ingredient.
 
 ---
 
@@ -428,7 +444,71 @@ Pure calculation utility, not a service (no I/O). Computes flour/dough requireme
 
 ---
 
-### 2.19 `supabaseClient`
+### 2.19 `dashboardInsights` (Phase 5A, `src/utils/dashboardInsights.js`)
+
+Pure calculation utilities, not a service (no I/O) — every Kitchen Intelligence Dashboard module is one of these functions, taking already-fetched aggregated data and deriving a view model. See [07_ANDAAZA_AI_LEARNING_ENGINE.md §13](./07_ANDAAZA_AI_LEARNING_ENGINE.md) for the "no new prediction logic" reuse principle each one follows.
+
+| Function | Reuses | Produces |
+| :--- | :--- | :--- |
+| `derivePantryHealth(predictions)` | `PredictionService.calculatePantryHealthScore` | `{ score, label, trackedIngredients, atRiskCount }` |
+| `deriveLowStockPredictions(predictions)` | — (filter/sort only) | Array of at-risk ingredients, soonest-first |
+| `deriveExpiryRisk(expiringBatches)` | — | Array with `daysUntilExpiry`/`isExpired`, soonest/most-overdue first |
+| `deriveShoppingIntelligence(predictions, consumptionProfiles, { withinDays? })` | — (joins two already-fetched sources by canonical_name) | "Buy soon" list with suggested quantity/brand |
+| `deriveCookingSuggestions(recipes, inventoryItems, atRiskCanonicalNames, { maxSuggestions? })` | `RecipeService.scaleRecipeIngredients`, `ingredientAvailability.js` (Phase 4C) | `{ readyToCook, useItUp }` — two deterministic buckets, not a scored recommendation |
+| `derivePantryInsights(householdProfile, consumptionProfiles)` | — | Diversity score, top categories, fastest-moving ingredients |
+| `deriveHouseholdTrends(householdProfile, consumptionProfiles)` | — | Shopping cadence, bill count, ingredient-profile stability |
+| `deriveObservationTimeline(observations)` | — | Display-ready `ai_observations` rows |
+| `deriveHouseholdSnapshot({...})` | — | Composes other modules' already-derived output into a compact header summary |
+| `deriveQuickActions({...})` | — | Contextual action buttons (max 4), prioritized by what's actionable |
+
+---
+
+### 2.20 `useDashboard` (Phase 5A, `src/hooks/useDashboard.js`)
+
+Orchestrating hook for `/dashboard`. Fires a small **fixed** set of aggregated queries — `PredictionService.getHouseholdPredictions`, `HouseholdIntelligenceService.getHouseholdProfile`, `ConsumptionProfileService.getAllProfiles`, `InventoryService.getExpiringBatches`, `AIObservationService.getRecentObservations`, plus `HouseholdService.getHouseholdDetails` — each one query per household, never one per ingredient/recipe/batch. Reuses existing hooks/cache keys rather than re-fetching: `useInventory()`, `useRecipes()` (same default-filter cache key `RecipeLibrary` warms), `useRecentlyCookedRecipes()`, `useMealHistory()`. All derived module data is wrapped in `useMemo`, keyed off stable references (a shared `EMPTY_ARRAY` constant avoids new-array-per-render invalidating memoization while a query is still loading).
+
+- **Returns**: `{ isLoading, isError, refetch, snapshot, pantryHealth, lowStock, expiryRisk, shoppingIntelligence, cookingSuggestions, pantryInsights, householdTrends, observationTimeline, quickActions }`
+
+---
+
+### 2.21 `PlanningEngine` (Phase 5B, `src/services/PlanningEngine.js`)
+
+Pure computation module (no I/O — deliberately not a Supabase-calling service like the rest of `src/services/`; see [09_RECIPE_AND_MEAL_LOGGING_SPECIFICATION.md §9.2](./09_RECIPE_AND_MEAL_LOGGING_SPECIFICATION.md) for why it lives here anyway). Reuses `dashboardInsights.js` (Phase 5A) and `ingredientAvailability.js`/`RecipeService.scaleRecipeIngredients` (Phase 4C/4B) directly rather than reimplementing availability, depletion, or expiry logic.
+
+#### `buildPlanningContext(raw)`
+- Assembles the shared context object every function below consumes from already-fetched data (recipes, inventory, predictions, consumption profiles, expiring batches, household profile, preferences, upcoming meal_logs, recent cooked meal_logs).
+
+#### `filterRecipesByPreferences(recipes, preferences, weekday)`
+- Hard filter (never a scoring signal) for `non_veg_days` and `excluded_vegetables`. Pure.
+
+#### `scoreMealCandidate(recipe, weekday, ctx)`
+- **Returns**: `{ recipe, score, reasons, confidence, availability, availabilitySummary, requiresShopping, missingIngredients }` — see §9.3 of the recipe/meal doc for the full scoring table. `reasons` is never empty.
+
+#### `generateTodaysPlan(ctx, excludedByMealType?)`
+- **Returns**: `{ breakfast, lunch, dinner }`, each `{ status: 'planned'|'cooked'|'skipped'|'suggested'|'no_options', mealLog?, suggestion?, alternates? }`.
+
+#### `generateWeekPreview(ctx, days = 7)`
+- **Returns**: `Array<{ date, weekday, dateLabel, meals: {...} }>` — tracks recipes already picked earlier in the week and prefers a fresh one where possible (variety optimization).
+
+#### `generateShoppingSuggestions(ctx)`
+- **Returns**: `Array<{ category, items: Array<{canonicalName, suggestedGrams, reason, confidence, priority, purchaseWindow, preferredBrand}> }>` — see §9.5 of the recipe/meal doc.
+
+#### `deriveCookingSuggestions` (re-exported from `dashboardInsights.js`)
+- For callers that want the plain "ready to cook" / "uses at-risk ingredients" buckets without day-of-week ranking.
+
+---
+
+### 2.22 `usePlanner` (Phase 5B, `src/hooks/usePlanner.js`)
+
+Orchestrating hook for `/planner`. Query keys for `predictions`/`householdProfile`/`consumptionProfiles`/`expiringBatches` deliberately match `useDashboard.js`'s exactly, and `preferences` matches the pre-existing `useHousehold.js`'s — visiting the Dashboard, completing onboarding, or opening the Planner all warm each other's caches. `mealLogs` (upcoming planned/cooked meals for the visible window) is the one genuinely new aggregated query.
+
+- **Returns**: `{ isLoading, isError, refetch, todaysPlan, weekPreview, shoppingSuggestions, recipeById, acceptSuggestion, isAccepting, dismissSuggestion, regenerateSuggestion }`
+- `acceptSuggestion(mealType, suggestion, date?)`: calls `MealLogService.createMealLog` (no new persistence logic), invalidates `mealLogs`/`mealHistory` caches.
+- `dismissSuggestion` / `regenerateSuggestion`: both add the candidate's recipe id to an in-memory (not persisted) per-slot exclusion set — a dismissal means "not today," not "never again."
+
+---
+
+### 2.23 `supabaseClient`
 
 The unified client configuration initializing Supabase JS SDK.
 

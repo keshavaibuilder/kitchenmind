@@ -48,3 +48,35 @@ export function RecipeDetailSkeleton() {
     </div>
   )
 }
+
+export function DashboardSkeleton() {
+  return (
+    <div className="min-h-screen bg-[#F5F7FA] px-4 pt-8 pb-8 max-w-md mx-auto space-y-4">
+      <Skeleton className="h-32 w-full" />
+      <div className="grid grid-cols-2 gap-3">
+        <Skeleton className="h-20" />
+        <Skeleton className="h-20" />
+      </div>
+      {Array.from({ length: 6 }).map((_, i) => (
+        <Skeleton key={i} className="h-16 w-full" />
+      ))}
+    </div>
+  )
+}
+
+export function PlannerSkeleton() {
+  return (
+    <div className="min-h-screen bg-[#F5F7FA] px-4 pt-8 pb-8 max-w-md mx-auto space-y-5">
+      <Skeleton className="h-8 w-1/2" />
+      {Array.from({ length: 3 }).map((_, i) => (
+        <Skeleton key={i} className="h-32 w-full" />
+      ))}
+      <div className="flex gap-3">
+        <Skeleton className="h-28 w-36 flex-shrink-0" />
+        <Skeleton className="h-28 w-36 flex-shrink-0" />
+        <Skeleton className="h-28 w-36 flex-shrink-0" />
+      </div>
+      <Skeleton className="h-40 w-full" />
+    </div>
+  )
+}

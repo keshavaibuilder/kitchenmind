@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { supabase } from '../lib/supabase'
+import { HouseholdService } from '../services/HouseholdService'
 import useAuthStore from '../store/authStore'
 
 import StepHouseholdName from '../components/onboarding/StepHouseholdName'
@@ -52,76 +52,19 @@ export default function Onboarding() {
     setSaving(true)
     setError('')
     try {
-      // 1. Household
-      const { data: household, error: hErr } = await supabase
-        .from('household')
-        .insert({
-          name: householdName.trim(),
-          baseline_members: members.adults + members.children,
-          roti_per_adult: members.rotiPerAdult,
-          roti_per_child: 2,
-        })
-        .select()
-        .single()
-      if (hErr) throw hErr
-
-      // 2. Members
-      const memberRows = []
-      for (let i = 0; i < members.adults; i++) {
-        memberRows.push({
-          household_id: household.id,
-          user_id: i === 0 ? user.id : null,
-          name: i === 0 ? 'You' : `Adult ${i + 1}`,
-          role: 'adult',
-          roti_preference: members.rotiPerAdult,
-        })
-      }
-      for (let i = 0; i < members.children; i++) {
-        memberRows.push({
-          household_id: household.id,
-          user_id: null,
-          name: `Child ${i + 1}`,
-          role: 'child',
-          roti_preference: 2,
-        })
-      }
-      const { error: mErr } = await supabase.from('members').insert(memberRows)
-      if (mErr) throw mErr
-
-      // 3. Preferences (includes tiffin columns)
-      const { error: pErr } = await supabase.from('preferences').insert({
-        household_id: household.id,
-        breakfast_rotation: [...customBreakfast, ...breakfast],
-        non_veg_days: nonVeg.eatsNonVeg ? nonVeg.days : [],
-        fasting_days: fasting.includes('none') ? [] : fasting,
-        dal_order: dalOrder.length
-          ? dalOrder.map((d) => d.id)
-          : ['masoor', 'toor', 'moong', 'chana', 'urad'],
-        excluded_vegetables: excludedVeg,
-        tiffin_default: tiffin.tiffinDefault ?? 'none',
-        tiffin_boxes: tiffin.tiffinDefault === '2boxes' ? 2 : tiffin.tiffinDefault === '1box' ? 1 : 0,
-        tiffin_box1_options: tiffin.box1,
-        tiffin_box2_options: tiffin.box2,
+      const { household } = await HouseholdService.createHouseholdWithMembersAndPreferences({
+        userId: user.id,
+        householdName,
+        members,
+        breakfast,
+        customBreakfast,
+        dalOrder,
+        excludedVeg,
+        nonVeg,
+        fasting,
+        tiffin,
+        customTiffin,
       })
-      if (pErr) throw pErr
-
-      // 4. Custom items (breakfast + tiffin)
-      const customRows = [
-        ...customBreakfast.map((name) => ({
-          household_id: household.id,
-          name,
-          meal_type: 'breakfast',
-        })),
-        ...customTiffin.map((name) => ({
-          household_id: household.id,
-          name,
-          meal_type: 'tiffin',
-        })),
-      ]
-      if (customRows.length) {
-        const { error: cErr } = await supabase.from('custom_items').insert(customRows)
-        if (cErr) throw cErr
-      }
 
       setHouseholdId(household.id)
       navigate('/', { replace: true })

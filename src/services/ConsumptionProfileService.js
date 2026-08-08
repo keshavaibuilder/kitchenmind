@@ -75,10 +75,33 @@ export const ConsumptionProfileService = {
   },
 
   /**
+   * Fetches every ingredient consumption profile for a household in one query — used by the
+   * Kitchen Intelligence Dashboard (Shopping Intelligence, Pantry Insights) instead of calling
+   * getIngredientProfile per ingredient, which would be an N+1 query pattern.
+   * @param {string} householdId
+   * @returns {Promise<Array<Object>>}
+   */
+  async getAllProfiles(householdId) {
+    if (!householdId) return []
+    try {
+      const { data, error } = await supabaseClient
+        .from('ingredient_consumption_profile')
+        .select('*')
+        .eq('household_id', householdId)
+
+      if (error) throw error
+      return data ?? []
+    } catch (err) {
+      logger.warn('Failed to fetch ingredient consumption profiles:', err)
+      return []
+    }
+  },
+
+  /**
    * Fetches the consumption profile for a canonical ingredient in a household.
-   * 
-   * @param {string} householdId 
-   * @param {string} canonicalName 
+   *
+   * @param {string} householdId
+   * @param {string} canonicalName
    * @returns {Promise<Object|null>}
    */
   async getIngredientProfile(householdId, canonicalName) {

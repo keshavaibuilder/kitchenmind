@@ -3,6 +3,42 @@ import { render } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import RecipeLibrary from '../RecipeLibrary'
 import MealHistory from '../MealHistory'
+import Dashboard from '../Dashboard'
+import Planner from '../Planner'
+
+vi.mock('../../hooks/usePlanner', () => ({
+  usePlanner: () => ({
+    isLoading: false,
+    isError: false,
+    refetch: vi.fn(),
+    todaysPlan: { breakfast: { status: 'no_options' }, lunch: { status: 'no_options' }, dinner: { status: 'no_options' } },
+    weekPreview: [],
+    shoppingSuggestions: [],
+    recipeById: new Map(),
+    acceptSuggestion: vi.fn(),
+    isAccepting: false,
+    dismissSuggestion: vi.fn(),
+    regenerateSuggestion: vi.fn(),
+  }),
+}))
+
+vi.mock('../../hooks/useDashboard', () => ({
+  useDashboard: () => ({
+    isLoading: false,
+    isError: false,
+    refetch: vi.fn(),
+    snapshot: { householdName: 'Test Kitchen', pantryHealthScore: 100, lowStockCount: 0, expiryRiskCount: 0 },
+    pantryHealth: { score: 100, label: 'Great', trackedIngredients: 0, atRiskCount: 0 },
+    lowStock: [],
+    expiryRisk: [],
+    shoppingIntelligence: [],
+    cookingSuggestions: { readyToCook: [], useItUp: [] },
+    pantryInsights: { pantryDiversityScore: 0, topCategories: [], preferredShoppingDay: null, mostConsumedIngredients: [] },
+    householdTrends: { shoppingFrequencyDays: null, totalBillsAnalyzed: 0, ingredientsWithStableProfile: 0, totalTrackedIngredients: 0, lastCookedAt: null },
+    observationTimeline: [],
+    quickActions: [{ id: 'browse', label: 'Browse recipes', path: '/recipes', emoji: '📖' }],
+  }),
+}))
 
 let browseState
 
@@ -44,6 +80,28 @@ describe('Recipe Workspace responsive container convention', () => {
     const { container } = render(
       <MemoryRouter>
         <MealHistory />
+      </MemoryRouter>
+    )
+    const shell = container.querySelector('.max-w-md')
+    expect(shell).not.toBeNull()
+    expect(shell.className).toMatch(/mx-auto/)
+  })
+
+  it('Dashboard uses the shared mobile-first max-width + centering shell', () => {
+    const { container } = render(
+      <MemoryRouter>
+        <Dashboard />
+      </MemoryRouter>
+    )
+    const shell = container.querySelector('.max-w-md')
+    expect(shell).not.toBeNull()
+    expect(shell.className).toMatch(/mx-auto/)
+  })
+
+  it('Planner uses the shared mobile-first max-width + centering shell', () => {
+    const { container } = render(
+      <MemoryRouter>
+        <Planner />
       </MemoryRouter>
     )
     const shell = container.querySelector('.max-w-md')

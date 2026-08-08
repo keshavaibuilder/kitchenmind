@@ -358,3 +358,85 @@ A shortfall (partial stock) never blocks this flow — `mark_meal_cooked()` dedu
 - **Cooking does not feed back into Phase 4A's consumption model** — `AndaazaLearningEngine.processPostCommitLearning()` only runs on bill commits (purchases). A household that cooks frequently but buys rarely won't see that reflected in `consumption_velocity_g_per_day` from cooking alone. Closing this would mean deciding whether `mark_meal_cooked()` should also trigger (a variant of) the Phase 4A learning hook — a deliberate design question for a future phase, not a bug in this one.
 - **Nutrition info and average rating are UI placeholders**, as explicitly scoped — no nutrition data source or rating system exists.
 - **`recipes.tags`** is stored and seeded but has no filter UI yet (only meal type, cuisine via search, and veg/non-veg are exposed as filters in the Library) — a small addition on top of what's already there.
+
+---
+
+## 9. Phase 5B — Smart Meal Planner & Shopping Intelligence
+
+An AI-assisted planning system, not a drag-and-drop calendar or a manual shopping checklist — every suggestion is generated deterministically and explained, and "accepting" one just creates a normal `meal_log` row (the same one `MealLogService.createMealLog` already produced for Phase 4B/4C, nothing new). **No new database migration was needed for this phase** — see §9.1.
+
+### 9.1 Why no new schema
+
+| Planner need | Reused instead of new | 
+| :--- | :--- |
+| Store an accepted suggestion | `meal_log` (status `'planned'`) via existing `MealLogService.createMealLog` |
+| Show already-planned meals in the week view | `MealLogService.getMealLogs(householdId, { from, to })` (existed since Phase 4B, just never called from a hook before) |
+| Household dietary preferences | `preferences` table via `HouseholdService.getPreferences` (existed since Phase 1/2, only ever read by the abandoned pre-service-layer onboarding flow — this is its first real use) |
+| "Dismiss" a suggestion | In-memory hook state (`usePlanner.js`), not persisted — a dismissal means "not today," not "never suggest again forever"; persisting it (like Phase 4C's localStorage Favorites) would risk permanently suppressing a good recipe from one accidental tap |
+
+### 9.2 PlanningEngine.js — architecture
+
+`src/services/PlanningEngine.js` is deliberately **not** a Supabase-calling service like the rest of `src/services/` — it's a pure computation module (no I/O), living there only because this phase's brief names it explicitly. It takes data `usePlanner.js` already fetched and derives suggestions, following the exact "pure derivation over pre-fetched aggregated data" pattern `dashboardInsights.js` established in Phase 5A — and reuses it directly rather than reimplementing:
+
+| Need | Reused from |
+| :--- | :--- |
+| Ingredient availability against real stock | `ingredientAvailability.computeIngredientAvailability` / `summarizeAvailability` (Phase 4C) |
+| Recipe ingredient scaling | `RecipeService.scaleRecipeIngredients` (Phase 4B) |
+| "What's expiring" / "what's low" | `dashboardInsights.deriveExpiryRisk` / `deriveLowStockPredictions` (Phase 5A) |
+| Base shopping list (item, quantity, brand, confidence) | `dashboardInsights.deriveShoppingIntelligence` (Phase 5A) |
+| "Ready to cook now" / "uses at-risk ingredients" as a plain bucket (not day-ranked) | `dashboardInsights.deriveCookingSuggestions`, re-exported from `PlanningEngine.js` |
+
+No new prediction, scoring, or depletion algorithm exists in this codebase after this phase. The **one** genuinely new heuristic is day-of-week pattern detection (§9.3) — and even that follows the existing confidence-scales-with-sample-count shape `ConsumptionProfileService` already established, not a new kind of model.
+
+### 9.3 Meal Suggestion Scoring
+
+For each candidate recipe in a meal-type slot, `scoreMealCandidate` computes a score and an explanation list (never empty — every suggestion has at least a baseline "Matches your `mealType` recipes" reason if nothing more specific applies):
+
+| Signal | Score | Reason text |
+| :--- | :--- | :--- |
+| Uses an ingredient expiring soon | +50, confidence ≥ 0.9 | "Uses X expiring soon" |
+| Fully covered by current stock | +30, confidence ≥ 0.85 | "Everything you need is already in stock" |
+| Missing 1-2 ingredients | +10 | "Just needs N more ingredient(s)" |
+| Day-of-week pattern: same recipe cooked ≥2 times on this weekday | +35, confidence `min(0.95, 0.5 + n×0.15)` | "You usually cook X on `Weekday`s" |
+| Day-of-week pattern: same cuisine cooked ≥2 times on this weekday (weaker signal, used when no exact-recipe pattern exists) | +15, confidence `min(0.85, 0.4 + n×0.1)` | "You often cook `Cuisine` food on `Weekday`s" |
+| Cooked very recently (in the last 5 cooked meals) | −40 | *(no reason text — a negative signal, not something to explain away)* |
+
+Candidates are ranked by score descending. **Today's Plan** picks the top candidate per slot; **This Week Preview** additionally tracks which recipes have already been picked earlier in the week and prefers a fresh one where possible (falling back to a repeat only if no alternative exists) — the explicit "variety optimization" requirement.
+
+### 9.4 Preference Filtering (Decision Rules)
+
+Hard filters, applied before scoring (never a scoring signal — dietary restrictions aren't negotiable):
+
+- `preferences.non_veg_days`: read as "non-veg is permitted on these days." **Empty/unset is treated as "no restriction configured," not "always vegetarian"** — the safer default for the many households that never explicitly set this. When non-empty, a non-vegetarian recipe (`is_vegetarian === false`) is excluded on any day not listed.
+- `preferences.excluded_vegetables`: a recipe is excluded if any of its ingredients match an excluded vegetable's canonical name (case-insensitive).
+- `preferences.fasting_days` **is not used as a filter** — there's no fasting-appropriate recipe tagging in the schema to filter *toward*, and guessing at what a specific household's fasting means (no onion/garlic? no grains? no cooking at all?) would be presumptuous. Not implemented, not planned to be guessed at.
+- `preferences.dal_order` and `preferences.breakfast_rotation` **are not used**. Both are free-text rotation lists from onboarding with no reliable mapping to `recipes.name`/`canonical_name` (would need fuzzy matching, e.g. via `IngredientMatchingService`, for uncertain payoff) — left as a disclosed gap rather than a shaky heuristic.
+
+### 9.5 Shopping Suggestion Generation
+
+`generateShoppingSuggestions` starts from `deriveShoppingIntelligence`'s depletion-based list (item, quantity, brand, confidence — all already Phase 5A logic) and adds, per item:
+
+- **Priority**: `HIGH` (≤2 days until depletion), `MEDIUM` (≤5 days), `LOW` (otherwise).
+- **Reason**: a plain-language depletion statement — `"X stock will run out in N days"` (≤3 days) or `"X stock is sufficient for N more days"` (matching the brief's example text exactly).
+- **Expected purchase window**: `"Buy now"` (≤2 days), `"Buy by <date>"` (within the household's typical shopping cadence, `household_learning_profile.shopping_frequency_days`), or `"Can wait until your next regular shop"` (comfortably beyond it).
+- **Category** (for grouping): from `ingredient_consumption_profile.category`.
+
+It then cross-references **upcoming planned meals** (`meal_log` rows with status `'planned'` in the visible window): for each, it scales that recipe's ingredients to the meal's `headcount` and checks availability against *current* inventory. Any shortfall becomes a `HIGH`-priority shopping entry reasoned as `"Needed for <Recipe>, planned <date>"` — or, if that ingredient already has a depletion-based suggestion, the two reasons are merged into one entry (never a duplicate row for the same ingredient) and the priority is escalated to `HIGH`.
+
+**Known simplification, disclosed rather than hidden**: planned-meal gap-checking is done independently per meal against current stock — it does not simulate inventory being consumed by an earlier planned meal before a later one in the same window (that would require assuming a cooking order across days that hasn't happened yet, and the resulting complexity wasn't judged worth it for how rarely two planned meals in one week would draw down the same ingredient to zero). Items are grouped by category and sorted `HIGH → MEDIUM → LOW` within each group; groups are sorted alphabetically.
+
+### 9.6 UI: Explainability
+
+Every suggestion card renders its full `reasons` array (never fewer than one) plus a rounded confidence percentage — `ReasonChips.jsx` has no code path that renders a suggestion without a reason, by construction (the underlying data can't produce one). **Accept** writes a real `meal_log` row via the same `MealLogService` Phase 4B/4C already use. **Dismiss** and **Regenerate** share one mechanism: both add the current candidate's recipe id to an in-memory per-slot exclusion set, causing the next-best-ranked alternative to surface — deterministic, not random, so "regenerate" is itself explainable (it's just "the next one down the ranked list").
+
+### 9.7 Not a 6th bottom-nav tab
+
+The Planner is reached via a dedicated always-visible card on the Kitchen Intelligence Dashboard ("📅 Plan your meals"), not a new `BottomNav` tab. Five tabs (Home, Scan, Recipes, Inventory, Insights) was already judged close to the practical limit for a mobile bottom nav; a sixth risked crowding rather than improving discoverability. `/planner` is still directly linkable and routed normally — this is a navigation-surface decision, not a feature limitation.
+
+### 9.8 Known Limitations & Future Extensions
+
+- **`fasting_days`, `dal_order`, `breakfast_rotation` are not used** (§9.4) — the most likely next enhancement if these fields matter enough to a household to invest in fuzzy-matching/tagging.
+- **No cross-meal inventory simulation** for planned-meal shopping gaps (§9.5).
+- **Week Preview has no per-day Accept/Dismiss/Regenerate** — only Today's Plan is individually actionable this phase; the week view is a glance, not yet an editable surface.
+- **This is explicitly not a scored recommendation engine** — every ranking signal in §9.3 is disclosed and traceable to a reason string. A learned/personalized ranking model remains out of scope, consistent with every prior phase's same boundary.
+- **Recipe pool is capped at 60** (`RecipeService.getRecipes(..., { limit: 60 })`) for planning purposes — a single aggregated query, large enough for real variety without an unbounded fetch; revisit if a household's combined catalogue meaningfully exceeds that.

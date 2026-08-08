@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { supabase } from '../lib/supabase'
+import { HouseholdService } from '../services/HouseholdService'
+import { MealLogService } from '../services/MealLogService'
 import useAuthStore from '../store/authStore'
 
 const QUICK_ACTIONS = [
@@ -25,19 +26,11 @@ export default function Home() {
   useEffect(() => {
     if (!household_id) return
 
-    supabase
-      .from('household')
-      .select('name')
-      .eq('id', household_id)
-      .single()
-      .then(({ data }) => { if (data) setHouseholdName(data.name) })
+    HouseholdService.getHouseholdDetails(household_id)
+      .then((data) => { if (data) setHouseholdName(data.name) })
 
-    supabase
-      .from('preferences')
-      .select('tiffin_default')
-      .eq('household_id', household_id)
-      .maybeSingle()
-      .then(({ data }) => {
+    HouseholdService.getPreferences(household_id)
+      .then((data) => {
         if (data) setTiffinDefault(data.tiffin_default ?? 'none')
       })
   }, [household_id])
@@ -46,15 +39,10 @@ export default function Home() {
   useEffect(() => {
     if (!household_id || tiffinDefault === null || tiffinDefault === 'none') return
 
-    supabase
-      .from('meal_log')
-      .select('status')
-      .eq('household_id', household_id)
-      .eq('meal_type', 'tiffin')
-      .eq('date', TODAY)
-      .maybeSingle()
-      .then(({ data }) => {
-        if (data) setTiffinDecision(data.status)
+    MealLogService.getMealLogs(household_id, { from: TODAY, to: TODAY })
+      .then((mealLogs) => {
+        const tiffin = mealLogs.find((m) => m.meal_type === 'tiffin')
+        if (tiffin) setTiffinDecision(tiffin.status)
       })
   }, [household_id, tiffinDefault])
 
@@ -65,8 +53,7 @@ export default function Home() {
     const status = choice === 'skip' ? 'skipped' : 'planned'
     const notes  = choice === 'skip' ? null : choice
 
-    await supabase.from('meal_log').insert({
-      household_id,
+    await MealLogService.createMealLog(household_id, {
       date: TODAY,
       meal_type: 'tiffin',
       headcount: 1,

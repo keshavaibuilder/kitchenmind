@@ -41,7 +41,6 @@ export async function verifyInventoryReconciliation(householdId, inMemoryInvento
   for (const batch of activeBatches) {
     if (batch.status !== 'active') continue
     const currentSum = batchSumMap.get(batch.inventory_id) || 0
-    batchSumMap.get(batch.inventory_id)
     batchSumMap.set(batch.inventory_id, currentSum + Number(batch.remaining_grams || 0))
   }
 
@@ -50,7 +49,11 @@ export async function verifyInventoryReconciliation(householdId, inMemoryInvento
 
   for (const item of inventoryItems) {
     const expectedGrams = Number(item.quantity_grams || 0)
-    const actualBatchSum = batchSumMap.get(item.id) !== undefined ? batchSumMap.get(item.id) : expectedGrams
+    // No entry in batchSumMap means zero active batches back this item (never purchased via a
+    // reconciled bill, or fully depleted) — that's a real 0, not an "assume reconciled" case.
+    // Treating it as equal to expectedGrams would silently hide exactly the drift this check
+    // exists to catch.
+    const actualBatchSum = batchSumMap.get(item.id) || 0
     const difference = Math.abs(expectedGrams - actualBatchSum)
 
     if (difference > 0.001) {

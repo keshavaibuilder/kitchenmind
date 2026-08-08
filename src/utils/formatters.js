@@ -2,6 +2,8 @@
  * Utility Formatters
  */
 
+export const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
+
 /**
  * Formats a date string into relative time (e.g. "Updated today", "Updated 2 days ago")
  * @param {string|Date} dateVal 

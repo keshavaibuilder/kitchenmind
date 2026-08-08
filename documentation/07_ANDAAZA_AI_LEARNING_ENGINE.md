@@ -201,3 +201,32 @@ All four tables are added in `supabase/migrations/0005_andaaza_intelligence_sche
 | `household_learning_profile` | Mutable, upserted (`UNIQUE (household_id)`) | One row per household summarizing pantry diversity, category trends, and shopping cadence |
 
 Derived values are deliberately **not** stored on `inventory` — the intelligence layer owns its own tables so inventory remains the operational source of truth for "what's on the shelf right now" and the learning layer remains free to evolve its statistics independently.
+
+---
+
+# Phase 5A — Kitchen Intelligence Dashboard (AI Architecture Reuse)
+
+> [!NOTE]
+> This project's docs don't have a dedicated `10_AI_ARCHITECTURE.md` — the closest existing home for AI-architecture content is this file. Dashboard-specific UI/component documentation lives in [12_API_AND_SERVICES_CATALOGUE.md §2.20-2.21](./12_API_AND_SERVICES_CATALOGUE.md); this section covers the two AI-architecture-relevant changes: the AI Observation Timeline's new persistence, and the dashboard's "no new prediction logic" reuse principle.
+
+## 12. AI Observation Timeline: Discovered Defect Fixed
+
+`AIObservationService.generateObservations()` has produced observation objects since Phase 3H (§2.12 of the services catalogue), but `recordPostCommitObservations()` only ever logged them (`logger.info`) and returned them to the caller — **nothing was ever persisted**. There was no table to write to, so any "AI Observation Timeline" UI would have had zero history to show, permanently, regardless of how much bill-scanning activity occurred.
+
+Fixed in migration `0008_ai_observation_timeline.sql`: an append-only `ai_observations` table (same pattern as `purchase_patterns` — an immutable event log, never updated in place), household-scoped RLS via `auth_household_id()`. `recordPostCommitObservations()` now inserts the generated observations (still fire-and-forget, still never able to affect the committed bill transaction — the insert is wrapped in its own try/catch inside the existing non-blocking hook chain). A new `getRecentObservations(householdId, limit)` read method feeds the dashboard's timeline with one aggregated query, most recent first.
+
+## 13. Dashboard Reuse Principle: No New Prediction Logic
+
+The Kitchen Intelligence Dashboard (Phase 5A) does not implement any new scoring, prediction, or recommendation algorithm. Every module in `src/utils/dashboardInsights.js` is a **pure derivation** over data already produced by Phase 4A/4B/4C engines:
+
+| Dashboard module | Reused logic | Source |
+| :--- | :--- | :--- |
+| Pantry Health | `PredictionService.calculatePantryHealthScore()` | called directly, not reimplemented |
+| Low Stock Predictions | `prediction_cache` rows (`is_low_stock_risk`, `days_until_depletion`) | filtered/sorted only |
+| Shopping Intelligence | `prediction_cache` + `ingredient_consumption_profile` | joined by canonical_name only |
+| Cooking Suggestions | `RecipeService.scaleRecipeIngredients()` + `ingredientAvailability.js` (Phase 4C) | the identical functions `CookMealFlow` already uses |
+| Pantry Insights / Household Trends | `household_learning_profile` + `ingredient_consumption_profile` | read and summarized only |
+
+"Cooking Suggestions" deserves a specific callout: it is **not** the recommendation engine that Phase 4A/4B/4C explicitly deferred. It is two deterministic, unscored buckets — recipes whose base-servings ingredients are fully covered by current stock, and recipes that reference a currently at-risk (low-stock or expiring) ingredient. No ranking, no learned weighting, no ML model. A true recommendation layer (scored suggestions, personalization) remains future scope.
+
+**Expiry Risk is a genuine "no data yet" module, not a bug.** No code path in this codebase has ever set `inventory_batches.expiry_date` — `commit_scanned_bill()` (migration `0004`) inserts batches with it left `NULL`, and there is no OCR expiry-date extraction or manual-entry UI. `InventoryService.getExpiringBatches()` is correctly implemented and will surface real data the moment either of those exists, but until then it legitimately returns an empty array for every household. The dashboard's Expiry Risk card shows an honest "no expiry data recorded yet" message rather than fabricating estimated shelf-life dates.

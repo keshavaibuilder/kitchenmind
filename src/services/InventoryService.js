@@ -32,6 +32,46 @@ export const InventoryService = {
   },
 
   /**
+   * Active batches expiring within a window, joined to inventory for household scoping and
+   * canonical_name — one query, not one per item. Used by the Kitchen Intelligence Dashboard's
+   * Expiry Risk module.
+   *
+   * Note: no code path currently sets inventory_batches.expiry_date (commit_scanned_bill inserts
+   * batches with expiry_date left NULL; there is no OCR expiry extraction or manual-entry UI for
+   * it yet), so this will legitimately return an empty array until one of those exists — that's
+   * a real "no data yet" state, not a bug in this query.
+   *
+   * @param {string} householdId
+   * @param {{ withinDays?: number }} [options]
+   * @returns {Promise<Array<Object>>}
+   */
+  async getExpiringBatches(householdId, { withinDays = 7 } = {}) {
+    if (!householdId) return []
+    try {
+      const cutoff = new Date()
+      cutoff.setDate(cutoff.getDate() + withinDays)
+      const cutoffDate = cutoff.toISOString().slice(0, 10)
+
+      const { data, error } = await supabaseClient
+        .from('inventory_batches')
+        .select('id, remaining_grams, expiry_date, purchase_date, status, inventory!inner(id, household_id, canonical_name, category)')
+        .eq('inventory.household_id', householdId)
+        .eq('status', 'active')
+        .not('expiry_date', 'is', null)
+        .lte('expiry_date', cutoffDate)
+        .order('expiry_date', { ascending: true })
+
+      if (error) {
+        throw normalizeError(error, 'INVENTORY_EXPIRY_FETCH_FAILED')
+      }
+
+      return data ?? []
+    } catch (err) {
+      throw normalizeError(err, 'INVENTORY_EXPIRY_FETCH_FAILED')
+    }
+  },
+
+  /**
    * Finds an inventory item by canonical name.
    * Type: Simple CRUD
    * @param {string} householdId 
@@ -71,6 +111,7 @@ export const InventoryService = {
     if (!householdId) throw normalizeError('Missing household_id', 'INVENTORY_ADD_FAILED')
     try {
       const existing = await this.getItemByCanonicalName(householdId, canonical)
+      let inventoryRow
 
       if (existing) {
         const { data, error } = await supabaseClient
@@ -84,7 +125,7 @@ export const InventoryService = {
           .single()
 
         if (error) throw normalizeError(error, 'INVENTORY_UPDATE_FAILED')
-        return data
+        inventoryRow = data
       } else {
         const { data, error } = await supabaseClient
           .from('inventory')
@@ -101,8 +142,23 @@ export const InventoryService = {
           .single()
 
         if (error) throw normalizeError(error, 'INVENTORY_INSERT_FAILED')
-        return data
+        inventoryRow = data
       }
+
+      // Without a batch, this stock is invisible to mark_meal_cooked()'s FIFO deduction (it
+      // only walks inventory_batches) — cooking a meal that uses this item would report a
+      // false shortfall and never actually decrement quantity_grams. Mirrors the batch commit_
+      // scanned_bill() already does per line item, just with bill_item_id/cost/expiry_date null
+      // since a manual add has none of those.
+      const { error: batchError } = await supabaseClient.from('inventory_batches').insert({
+        inventory_id: inventoryRow.id,
+        initial_grams: gramsToStore,
+        remaining_grams: gramsToStore,
+        status: 'active',
+      })
+      if (batchError) throw normalizeError(batchError, 'INVENTORY_BATCH_CREATE_FAILED')
+
+      return inventoryRow
     } catch (err) {
       throw normalizeError(err, 'INVENTORY_ADD_FAILED')
     }

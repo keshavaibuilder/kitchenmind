@@ -1,5 +1,6 @@
 import { useState, useRef, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { useQueryClient } from '@tanstack/react-query'
 import { useBillProcessing } from '../hooks/useBillProcessing.js'
 import { useHousehold } from '../hooks/useHousehold.js'
 import { BillPersistenceService } from '../services/BillPersistenceService.js'
@@ -26,6 +27,7 @@ function uid() {
 
 export default function ScanBill() {
   const navigate = useNavigate()
+  const queryClient = useQueryClient()
   const { processBill, isProcessing, error: processError } = useBillProcessing()
   const { household } = useHousehold()
 
@@ -132,6 +134,15 @@ export default function ScanBill() {
       })
       setCommitSummary(summary)
       setPhase('success')
+
+      // Explicit invalidation rather than relying on the QueryClient's default staleTime:0 to
+      // force a refetch on next mount — matches the explicit pattern used by useCookMeal/usePlanner.
+      queryClient.invalidateQueries({ queryKey: ['inventory', household.id] })
+      queryClient.invalidateQueries({ queryKey: ['predictions', household.id] })
+      queryClient.invalidateQueries({ queryKey: ['householdProfile', household.id] })
+      queryClient.invalidateQueries({ queryKey: ['consumptionProfiles', household.id] })
+      queryClient.invalidateQueries({ queryKey: ['expiringBatches', household.id] })
+      queryClient.invalidateQueries({ queryKey: ['observations', household.id] })
     } catch (err) {
       setErrorMsg(err.message || 'Failed to save bill to kitchen inventory')
       setPhase('commit_error')

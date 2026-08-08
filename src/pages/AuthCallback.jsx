@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { supabase } from '../lib/supabase'
+import { supabaseClient } from '../services/supabaseClient'
+import { HouseholdService } from '../services/HouseholdService'
 import useAuthStore from '../store/authStore'
 
 export default function AuthCallback() {
@@ -8,21 +9,17 @@ export default function AuthCallback() {
   const { setSession, setHouseholdId } = useAuthStore()
 
   useEffect(() => {
-    supabase.auth.getSession().then(async ({ data: { session } }) => {
+    supabaseClient.auth.getSession().then(async ({ data: { session } }) => {
       if (!session) {
         navigate('/login', { replace: true })
         return
       }
       setSession(session)
 
-      const { data } = await supabase
-        .from('members')
-        .select('household_id')
-        .eq('user_id', session.user.id)
-        .maybeSingle()
+      const householdId = await HouseholdService.getHouseholdIdByUserId(session.user.id)
 
-      if (data?.household_id) {
-        setHouseholdId(data.household_id)
+      if (householdId) {
+        setHouseholdId(householdId)
         navigate('/', { replace: true })
       } else {
         navigate('/onboarding', { replace: true })

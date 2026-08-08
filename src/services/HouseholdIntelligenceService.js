@@ -1,5 +1,6 @@
 import { supabaseClient } from './supabaseClient.js'
 import { logger } from '../utils/logger.js'
+import { WEEKDAYS } from '../utils/formatters.js'
 
 /**
  * HouseholdIntelligenceService
@@ -34,14 +35,12 @@ export const HouseholdIntelligenceService = {
 
     if (billHistory.length > 1) {
       const dayOfWeekCounts = new Map()
-      const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
-
       const billDates = []
       billHistory.forEach((b) => {
         const dateObj = new Date(b.bill_date || b.created_at)
         if (!isNaN(dateObj)) {
           billDates.push(dateObj)
-          const dayName = days[dateObj.getDay()]
+          const dayName = WEEKDAYS[dateObj.getDay()]
           dayOfWeekCounts.set(dayName, (dayOfWeekCounts.get(dayName) || 0) + 1)
         }
       })

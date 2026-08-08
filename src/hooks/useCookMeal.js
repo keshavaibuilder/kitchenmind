@@ -75,12 +75,17 @@ export function useCookMeal(recipe) {
     onSuccess: () => {
       // Cooking changes real inventory, so anything that reads it (or derives from it) must
       // refetch: inventory itself, this recipe's cooking history, and the Library's
-      // "recently cooked" shelf. Phase 4A's learning-engine tables (ingredient_consumption_profile
-      // etc.) update asynchronously server-side post-commit-style — there's no frontend query on
-      // them yet to invalidate.
+      // "recently cooked" shelf. Dashboard/Planner (Phase 5A/5B) also read predictions and
+      // learning-derived data that shift once inventory is deducted, so those need explicit
+      // invalidation too rather than waiting on a route change to happen to refetch them.
       queryClient.invalidateQueries({ queryKey: ['inventory', household_id] })
       queryClient.invalidateQueries({ queryKey: ['mealHistory'] })
       queryClient.invalidateQueries({ queryKey: ['recentlyCookedRecipeIds', household_id] })
+      queryClient.invalidateQueries({ queryKey: ['predictions', household_id] })
+      queryClient.invalidateQueries({ queryKey: ['householdProfile', household_id] })
+      queryClient.invalidateQueries({ queryKey: ['consumptionProfiles', household_id] })
+      queryClient.invalidateQueries({ queryKey: ['expiringBatches', household_id] })
+      queryClient.invalidateQueries({ queryKey: ['observations', household_id] })
     },
   })
 

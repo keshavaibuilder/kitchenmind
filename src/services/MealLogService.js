@@ -29,9 +29,9 @@ export const MealLogService = {
   },
 
   /**
-   * Creates a meal_log row in the default 'planned' state.
+   * Creates a meal_log row, defaulting to the 'planned' state.
    * @param {string} householdId
-   * @param {{ date: string, meal_type: string, recipe_id?: string, headcount?: number, notes?: string }} payload
+   * @param {{ date: string, meal_type: string, recipe_id?: string, headcount?: number, notes?: string, status?: string }} payload
    * @returns {Promise<Object>}
    */
   async createMealLog(householdId, payload) {
@@ -39,7 +39,7 @@ export const MealLogService = {
     try {
       const { data, error } = await supabaseClient
         .from('meal_log')
-        .insert({ ...payload, household_id: householdId, status: 'planned' })
+        .insert({ ...payload, household_id: householdId, status: payload.status || 'planned' })
         .select()
         .single()
       if (error) throw normalizeError(error, 'MEAL_LOG_CREATE_FAILED')

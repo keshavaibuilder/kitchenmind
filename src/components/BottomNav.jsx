@@ -8,6 +8,8 @@ const TABS = [
   // matchPrefixes covers both /recipes (library) and /recipe/:id (detail, singular route).
   { label: 'Recipes',   emoji: '🥘', path: '/recipes', matchPrefixes: ['/recipes', '/recipe/'] },
   { label: 'Inventory', emoji: '📦', path: '/inventory'  },
+  // Phase 5A: Kitchen Intelligence Dashboard — additive, doesn't touch the existing Home screen.
+  { label: 'Insights',  emoji: '🧠', path: '/dashboard'  },
 ]
 
 export default function BottomNav() {

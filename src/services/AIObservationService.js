@@ -127,6 +127,18 @@ export const AIObservationService = {
 
       const observations = await this.generateObservations(householdId, activeItems, existingInventory)
 
+      // Persist to ai_observations (append-only) so the Kitchen Intelligence Dashboard's
+      // Observation Timeline has real history — previously these were generated and logged
+      // but never written anywhere.
+      if (observations.length > 0) {
+        try {
+          const { error } = await supabaseClient.from('ai_observations').insert(observations)
+          if (error) throw error
+        } catch (err) {
+          logger.warn('Failed to persist AI observations to ai_observations:', err)
+        }
+      }
+
       logger.info(`Generated ${observations.length} AI post-commit observations for household ${householdId}`, {
         householdId,
         count: observations.length,
@@ -145,6 +157,30 @@ export const AIObservationService = {
         observationsCount: 0,
         error: normalizeError(err).message,
       }
+    }
+  },
+
+  /**
+   * Read-only API for the Observation Timeline — a single aggregated query, most recent first.
+   * @param {string} householdId
+   * @param {number} [limit=20]
+   * @returns {Promise<Array<Object>>}
+   */
+  async getRecentObservations(householdId, limit = 20) {
+    if (!householdId) return []
+    try {
+      const { data, error } = await supabaseClient
+        .from('ai_observations')
+        .select('*')
+        .eq('household_id', householdId)
+        .order('created_at', { ascending: false })
+        .limit(limit)
+
+      if (error) throw error
+      return data ?? []
+    } catch (err) {
+      logger.warn('Failed to fetch recent AI observations:', err)
+      return []
     }
   },
 }
