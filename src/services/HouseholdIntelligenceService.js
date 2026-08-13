@@ -81,14 +81,16 @@ export const HouseholdIntelligenceService = {
 
   /**
    * Read-only API to get current household intelligence profile.
-   * 
-   * @param {string} householdId 
+   *
+   * @param {string} householdId
+   * @param {import('@supabase/supabase-js').SupabaseClient} [client] - Injectable client; see
+   *   InventoryService.getInventory for why.
    * @returns {Promise<Object|null>}
    */
-  async getHouseholdProfile(householdId) {
+  async getHouseholdProfile(householdId, client = supabaseClient) {
     if (!householdId) return null
     try {
-      const { data, error } = await supabaseClient
+      const { data, error } = await client
         .from('household_learning_profile')
         .select('*')
         .eq('household_id', householdId)
@@ -99,6 +101,51 @@ export const HouseholdIntelligenceService = {
     } catch (err) {
       logger.warn('Failed to fetch household_learning_profile:', err)
       return null
+    }
+  },
+
+  /**
+   * Coarse month-over-month spend total from `bills`, grouped client-side (no schema change,
+   * no new SQL aggregation function — a single indexed query over a small per-household row
+   * count). Added for the AI Copilot's HouseholdProfileTool (Sprint 6A §2.9/§3.3): the only
+   * spend-trend answer available before Phase 5C's `budget_monthly` wiring exists. Does not
+   * break down by category — that remains a Phase 5C gap, disclosed by the tool, not this method.
+   *
+   * @param {string} householdId
+   * @param {number} [months=3]
+   * @param {import('@supabase/supabase-js').SupabaseClient} [client] - Injectable client; see
+   *   InventoryService.getInventory for why.
+   * @returns {Promise<Array<{ month: string, total: number }>>}
+   */
+  async getSpendByMonth(householdId, months = 3, client = supabaseClient) {
+    if (!householdId) return []
+    try {
+      const since = new Date()
+      since.setMonth(since.getMonth() - (months - 1))
+      since.setDate(1)
+      const sinceDate = since.toISOString().slice(0, 10)
+
+      const { data, error } = await client
+        .from('bills')
+        .select('bill_date, total_amount')
+        .eq('household_id', householdId)
+        .gte('bill_date', sinceDate)
+        .order('bill_date', { ascending: true })
+
+      if (error) throw error
+
+      const totals = new Map()
+      for (const bill of data ?? []) {
+        const month = String(bill.bill_date).slice(0, 7) // YYYY-MM
+        totals.set(month, (totals.get(month) || 0) + (Number(bill.total_amount) || 0))
+      }
+
+      return Array.from(totals.entries())
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([month, total]) => ({ month, total: Number(total.toFixed(2)) }))
+    } catch (err) {
+      logger.warn('Failed to fetch spend-by-month from bills:', err)
+      return []
     }
   },
 }

@@ -164,12 +164,14 @@ export const AIObservationService = {
    * Read-only API for the Observation Timeline — a single aggregated query, most recent first.
    * @param {string} householdId
    * @param {number} [limit=20]
+   * @param {import('@supabase/supabase-js').SupabaseClient} [client] - Injectable client; see
+   *   InventoryService.getInventory for why.
    * @returns {Promise<Array<Object>>}
    */
-  async getRecentObservations(householdId, limit = 20) {
+  async getRecentObservations(householdId, limit = 20, client = supabaseClient) {
     if (!householdId) return []
     try {
-      const { data, error } = await supabaseClient
+      const { data, error } = await client
         .from('ai_observations')
         .select('*')
         .eq('household_id', householdId)

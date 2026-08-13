@@ -179,5 +179,12 @@ export function useDashboard() {
     householdTrends,
     observationTimeline,
     quickActions,
+    household_id,
+    inventoryItems,
+    predictions,
+    expiringBatches,
+    recentMealLogs,
+    recipes,
+    observations,
   }
 }

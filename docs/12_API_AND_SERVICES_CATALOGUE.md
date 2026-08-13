@@ -1,8 +1,8 @@
 # KitchenMind: API & Services Catalogue
 
-**Document Version:** 1.0.0  
+**Document Version:** 1.1.0  
 **Status:** Approved Specification  
-**Domain:** Core Frontend & API Integration Layer  
+**Domain:** Core Frontend & API Integration Layer + AI Copilot Runtime (Sprint 6B)  
 
 ---
 
@@ -526,3 +526,194 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
   }
 });
 ```
+
+---
+
+### 2.24 Service-layer client injection (Sprint 6B, cross-cutting)
+
+The methods below gained an **optional trailing `client` parameter**, defaulting to the existing `supabaseClient` singleton — purely additive, every existing browser call site is unaffected (verified: no call site passed a conflicting positional argument). This exists so the AI Copilot Edge Function (§3) can call the *same* service code with a **per-request-scoped** Supabase client instead of a shared singleton — required because a multi-tenant server process handling concurrent requests from different households cannot safely share one mutable, session-bound client the way a single browser tab can.
+
+`InventoryService.getInventory`, `InventoryService.getExpiringBatches`, `PredictionService.getHouseholdPredictions`, `RecipeService.getRecipes`, `RecipeService.getRecipeById`, `AIObservationService.getRecentObservations`, `HouseholdIntelligenceService.getHouseholdProfile`, `HouseholdIntelligenceService.getSpendByMonth` (**new method**, see below), `ConsumptionProfileService.getAllProfiles`, `MealLogService.getMealLogs`, `MealLogService.getMealHistory`, `MealLogService.getRecentlyCookedRecipeIds`, `MealLogService.getStockDeductionsForMeal`, `HouseholdService.getPreferences`, `HouseholdService.getHouseholdIdByUserId`, `HouseholdService.getHouseholdDetails`, `HouseholdService.getMembers`.
+
+Two files (`InventoryService.js`, `HouseholdService.js`) also had their `./supabaseClient` / `@/utils/errors` imports normalized to explicit relative paths with `.js` extensions, matching every other service file's existing convention — required because Deno (which the Edge Function runs on) resolves relative specifiers strictly and has no knowledge of Vite's `@/` alias. Confirmed via a live `deno run` smoke test before and after the fix.
+
+#### `HouseholdIntelligenceService.getSpendByMonth(householdId, months = 3, client)` (new)
+
+Coarse month-over-month spend total, grouped client-side from `bills.total_amount` / `bills.bill_date` — no new SQL aggregation function, no schema change. Added specifically for the AI Copilot's `household.profile` capability (§3); this is the only spend-trend signal available before Phase 5C wires up `budget_monthly` for category-level breakdowns.
+
+---
+
+### 2.25 `CopilotService` (Sprint 6C, `src/services/CopilotService.js`)
+
+Frontend service layer for streaming chat turns to the certified AI Copilot Edge Function (`copilot-chat`) and managing conversation persistence.
+
+#### `streamChatTurn({ message, conversationId, onToken, onToolCall, onDone, onError, signal, client })`
+- **Parameters**: `message` (string prompt), `conversationId` (string UUID or null), `onToken` (callback), `onToolCall` (callback), `onDone` (callback), `onError` (callback), `signal` (`AbortSignal`), `client` (Supabase client).
+- **Behavior**: Calls `/functions/v1/copilot-chat` via Server-Sent Events stream (`fetch`). Handles `token`, `tool_call`, `done`, `error` SSE events, cancellation via `AbortSignal`, and structured error mapping (`401`, `429 rate_limited`, `503 copilot_unavailable`).
+
+#### `loadConversations(householdId, client)`
+- **Returns**: `Promise<Array<CopilotConversation>>` — sorted by `updated_at` descending.
+
+#### `loadMessages(conversationId, client)`
+- **Returns**: `Promise<Array<CopilotMessage>>` — sorted by `created_at` ascending.
+
+#### `createConversation(householdId, title, client)`
+- **Returns**: `Promise<CopilotConversation>` — inserts new conversation row in `copilot_conversations`.
+
+#### `renameConversation(conversationId, newTitle, client)` / `deleteConversation(conversationId, client)` / `clearMessages(conversationId, client)`
+- CRUD utilities for conversation title updates and message cleanup.
+
+---
+
+### 2.26 `useCopilot` (Sprint 6C, `src/hooks/useCopilot.js`)
+
+State orchestrator hook for `/copilot`. Manages active conversation selection, message stream buffering, streaming status, tool execution events, error state, search filtering, and confirmation-gated action execution state (`actionStates`, `confirmAction`, `cancelAction`).
+
+- **Returns**: `{ conversations, activeConversation, activeConversationId, messages, isLoadingConversations, isLoadingMessages, isStreaming, streamingDelta, toolCalls, error, searchQuery, setSearchQuery, selectConversation, createNewConversation, sendTurn, stopGeneration, retryLastTurn, renameActiveConversation, deleteActiveConversation, clearActiveMessages, actionStates, confirmAction, cancelAction }`
+
+---
+
+### 2.27 `ActionExecutionService` (Sprint 6D, `src/services/ActionExecutionService.js`)
+
+Frontend boundary service for executing user-confirmed AI action proposals (`meal.mark_cooked`, `meal.cook_now`, `planner.add_meal`, `inventory.add_item`, `memory.save`, `memory.delete`).
+
+#### `executeAction({ householdId, actionProposal, queryClient })`
+- **Parameters**: `householdId` (string UUID), `actionProposal` (`ActionProposal` structure), `queryClient` (React Query client).
+- **Security & Idempotency**:
+  - Validates `householdId` against active authenticated session.
+  - Enforces in-memory token deduplication (`executedActionTokens`) against double-clicking, SSE retries, or concurrent execution attempts.
+  - Dispatches to existing authorized domain services (`MealLogService`, `InventoryService`, `MemoryService`).
+  - Invalidates React Query caches (`queryKey: ['inventory']`, `['meal_log']`, `['planner']`, `['dashboard']`, `['copilot_memories']`).
+
+---
+
+### 2.28 `MemoryService` (Sprint 6E, `src/services/MemoryService.js`)
+
+Domain service for managing explicit, user-controlled Copilot long-term memory stored in `copilot_memory`.
+
+#### `loadMemories(householdId)`
+- Returns all non-deleted memories for `householdId`, ordered by `updated_at DESC`.
+
+#### `getActiveMemories(householdId)`
+- Returns active, non-expired memories (`status = 'active'`) for context assembly.
+
+#### `saveMemory(householdId, { memoryType, memoryKey, memoryValue, source, expiresAt })`
+- Inserts or updates an explicit memory record.
+
+#### `updateMemory(householdId, memoryId, updates)`
+- Updates memory fields (`memory_key`, `memory_value`, `memory_type`).
+
+#### `setMemoryStatus(householdId, memoryId, status)`
+- Updates memory status (`'active'`, `'disabled'`, `'deleted'`).
+
+#### `deleteMemory(householdId, memoryId)`
+- Soft-deletes a memory entry.
+
+#### `clearAllMemories(householdId)`
+- Soft-deletes all long-term memories for a household.
+
+---
+
+### 2.29 `InsightEngine` & `InsightStateService` (Sprint 7A, `src/services/insight/`)
+
+Pure deterministic intelligence engine and lifecycle state service for generating proactive evidence-backed household insights on the Dashboard.
+
+#### `InsightEngine.generateInsights(context)`
+- **Parameters**: `householdId`, `pantryItems`, `predictions`, `expiringBatches`, `mealLogs`, `recipes`, `observations`, `preferences`, `memories`.
+- Generates structured proactive insight objects (`LOW_STOCK`, `LIKELY_DEPLETION`, `USE_SOON`, `DINNER_NOT_PLANNED`, `INGREDIENTS_AVAILABLE_FOR_MEAL`, `SHOPPING_GAP`) with explicit evidence items, confidence scores, deduplication keys, and suggested next steps (Copilot prompt handoff or Sprint 6D action proposal).
+
+#### `InsightStateService.filterActiveInsights(insights, householdId)`
+- Filters generated insights against active user dismissals (stored in `localStorage`) and expiration timestamps (`expires_at`), returning active insights sorted by severity (`critical` > `warning` > `info`) and confidence score.
+
+#### `InsightStateService.dismissInsight(householdId, deduplicationKey)`
+- Persists user dismissal for an insight deduplication key.
+
+---
+
+### 2.30 `NotificationService`, `NotificationPolicyService`, `NotificationScheduler`, `NotificationPreferencesService` (Sprint 7C, `src/services/notification/`)
+
+Notification and intelligent scheduling subsystem consuming validated `InsightEngine` output.
+
+#### `NotificationPreferencesService.getPreferences(householdId)` / `updatePreferences(householdId, updates)`
+- Manages household delivery preferences (`notificationsEnabled`, `quietHours`, `maxNotificationsPerDay`, `minSeverity`, `categoriesEnabled`).
+
+#### `NotificationPolicyService.evaluate(insight, householdId, options)`
+- Evaluates a validated `Insight` object against household preferences, quiet hours, daily volume limits, and freshness rules, returning delivery mode (`IMMEDIATE`, `SCHEDULED`, `DIGEST`, `SUPPRESSED`).
+
+#### `NotificationService.createNotificationFromInsight(insight, householdId, policy)`
+- Idempotently creates and stores an in-app notification from an insight using deterministic key `NOTIF:[deduplication_key]:[date]`.
+
+#### `NotificationScheduler.processInsights(householdId, activeInsights, options)`
+- Batch processes active insights, performing pre-delivery re-validation (checks expiration and resolution status) before scheduling or delivering notifications.
+
+---
+
+### 2.31 `WorkflowEngine`, `WorkflowStateService`, `workflowRegistry` (Sprint 7D, `src/services/workflow/`)
+
+Proactive household workflow engine and lifecycle state manager guiding users through confirmation-gated assistance.
+
+#### `WorkflowEngine.evaluateWorkflows(context)`
+- **Parameters**: `householdId`, `activeInsights`, `nowDate`.
+- Deterministically evaluates candidate workflows (`WORKFLOW_01` through `WORKFLOW_05`) against validated active insights, enforcing minimum confidence thresholds, cooldown windows, and unmodifiable evidence context.
+
+#### `WorkflowStateService.getWorkflows(householdId)` / `dismissWorkflow(householdId, instanceId)` / `completeWorkflow(householdId, instanceId)`
+- Manages client-side workflow state transitions (`ELIGIBLE`, `PRESENTED`, `ACCEPTED`, `COMPLETED`, `DISMISSED`) and persists cooldown timestamps.
+
+---
+
+## 3. AI Copilot Runtime (Sprint 6B, `supabase/functions/copilot-chat/`)
+
+Implements the execution engine specified in `21_AI_COPILOT_ARCHITECTURE_AND_DESIGN.md` (frozen v1.1.0). A Deno-based Supabase Edge Function — the first backend compute layer this codebase has (§0.2 of that document). Does **not** include a chat UI (Sprint 6C) or any write-capable action (Sprint 6D) — this sprint is read-only.
+
+### 3.1 Entry point — `index.ts`
+
+`Deno.serve` HTTP handler implementing the §8 API contract: `POST /` (SSE by default, `?stream=false` for a single JSON response), JWT verification via `client.auth.getUser()`, household resolution via `HouseholdService.getHouseholdIdByUserId`, then delegates to the orchestrator. Every request gets its **own** `createClient(url, anonKey, { global: { headers: { Authorization } } })` — never a shared/module-level client — so RLS scopes each request to its own caller with no application-level household filtering, and concurrent requests from different households never share mutable client state. Returns `401`/`405`/`422`/`503` per §8.4.
+
+### 3.2 Capability Registry — `registry/capabilityRegistry.ts`, `registry/capabilities.ts`
+
+Runtime implementation of design doc §3.1. A static, versioned array of 9 capability entries (8 enabled read capabilities + 1 disabled write capability, `meal.mark_cooked`, registered now but excluded from `listEnabled()`/`toProviderToolSpecs()` so Sprint 6D can flip it on with an `access_class`-driven confirmation flow and zero orchestration-code changes). A module-load-time check (`assertNoHouseholdScopeLeak`) throws if any capability's input schema ever exposes a household-identifying field — the registry itself refuses to register such a capability, not just a code-review convention.
+
+### 3.3 Tool Framework — `tools/*.ts`
+
+All 8 read-only tools from design doc §3.3, each a thin adapter calling the injected-client service methods (§2.24) directly — no parallel data-access path, no raw database access exposed to the LLM. `PlannerTool`/`ShoppingTool` share a `_planningContext.ts` helper that fetches the same raw inputs `usePlanner.js` already does client-side, then calls `PlanningEngine.buildPlanningContext` unmodified. Every tool returns the `{ ok, data?, error?, asOf, source, stale? }` envelope from design doc §3.2.
+
+### 3.4 Context Assembler & Prompt Builder — `runtime/contextAssembler.ts`, `runtime/promptBuilder.ts`
+
+Context Assembler reuses `dashboardInsights.derivePantryHealth` for the base-context snapshot rather than a new formula. Prompt Builder assembles the deterministic 4-block system prompt (§4.1), separates a byte-identical `cacheableSystemPrefix` (identity + tool catalogue) from the dynamic household-context block for provider-level prompt caching (§7.4), and flags `exceedsBudget` against the §4.3 token cap using a dependency-free `~4 chars/token` estimator (documented as approximate — not a billing-accurate tokenizer).
+
+### 3.5 AI Trust Model — `runtime/trustModel.ts`
+
+Implements all 5 stages from design doc §1.9: Evidence Ledger, Claim Extraction, Claim-to-Evidence Matching, Disclosure Enforcement, Citation Attachment, with `PASS`/`REPAIR`/`BLOCK` verdicts. **Implementation note (important):** this is a heuristic implementation — regex-based numeric-claim extraction plus literal-value ledger lookup, not an NLI/entailment model. It reliably catches an LLM stating a number or entity no tool result supports; it can under-flag claims phrased without a literal number and, rarely, over-flag a coincidental one. Both directions are visible via the `Trust verdict distribution` telemetry metric (design doc §9.2), not silent. `BLOCK` (repair exhausted, still failing) substitutes a safe fallback string and is logged as a hard failure — no unvalidated draft ever reaches `runtime/orchestrator.ts`'s output stream.
+
+### 3.6 LLM Provider Abstraction — `providers/*.ts`
+
+Common `LLMProvider` interface (`streamChat({system, messages, tools}) -> AsyncGenerator<ProviderStreamEvent>`), selected via `COPILOT_LLM_PROVIDER` env var (`providers/providerFactory.ts`), adding a new provider means one new factory function with zero changes elsewhere.
+
+- **`geminiProvider.ts` (default)** — **live-verified end-to-end** against the real Gemini API during implementation, not written from documentation alone. Two undocumented-until-tested findings baked into the implementation: (1) `gemini-2.5-flash` (the model `src/lib/gemini.js`'s OCR call hardcodes) 404s for this account ("no longer available to new users") — the `gemini-flash-latest` alias is used instead specifically to avoid the same fragility; (2) function-calling turns require echoing back an opaque `thoughtSignature` string on any replayed `functionCall` part or the API 400s — threaded through via a new `ProviderMessage.providerMeta` field (opaque to every module except this provider, so no other layer needs to know Gemini has this quirk).
+- **`groqProvider.ts` / `sambanovaProvider.ts`** — both thin configs over a shared `openAiCompatibleProvider.ts` (OpenAI-compatible streaming + tool-call-argument-fragment accumulation, both providers document drop-in compatibility). **Not live-verified** — no API key for either was available in the implementation environment. Unit-tested against a mocked `fetch` proving the accumulation/parsing logic is internally correct against the documented wire format, which is a weaker guarantee than Gemini's live verification.
+
+### 3.7 Conversation Store — `runtime/conversationStore.ts` + migration `0010_copilot_conversation_store.sql`
+
+Three new tables, RLS-isolated identically to every other tenant table (`auth_household_id()`): `copilot_conversations`, `copilot_messages` (`household_id` denormalized directly onto the row, matching the `stock_deductions`/`bill_items` precedent), `copilot_tool_calls` (indirect RLS via `message_id -> copilot_messages.household_id`, the original `stock_deductions` pattern). **Not executed against a live database** — no Postgres instance was available in the implementation environment (no `psql`/Docker); the SQL was written to exactly match the proven syntax patterns of migrations 0001/0006/0008, not verified by a live migration run.
+
+### 3.8 Telemetry — `runtime/telemetry.ts`
+
+Structured JSON log lines (`console.log`/`console.error`, captured by whatever the Edge Function runtime forwards stdout to) — no metrics-vendor/dashboard integration this sprint, a deliberate scope trim, not an oversight. Never logs message content, only structural/numeric fields (latency, tool timings, provider, token counts, an approximate cost estimate, Trust Model verdict, repair count, blocked flag) — satisfies the "No PII" requirement.
+
+### 3.9 Orchestrator — `runtime/orchestrator.ts`
+
+Implements the full request lifecycle (design doc §1.4) as an async generator. **Streaming design note:** raw LLM tokens are *not* forwarded to the client as they're generated — each round is buffered internally, run through the full Trust Model pipeline, and only the validated (or `BLOCK`-fallback) text is chunked and emitted. This is a deliberate reading of §1.9 ("mechanically blocks any response from shipping until it passes" — shipping means the client never sees an unvalidated draft, not even transiently), traded against a later first-token time than naive token-by-token forwarding would give; §7.1's latency budget should be read as "time to first token of the *validated* answer."
+
+### 3.10 Testing
+
+49 Deno tests (`_tests/*.test.ts`, `deno test --allow-read --allow-env`), covering the Capability Registry, `InventoryTool` (via an in-memory mock Supabase client mirroring `mockSupabaseTable.js`'s pattern), the Prompt Builder's determinism/budgeting, the Trust Model's PASS/REPAIR paths including a multi-turn repair-then-pass scenario, the Conversation Store, the provider factory's error paths, and the OpenAI-compatible SSE parser's fragment-accumulation logic (mocked `fetch`, since Groq/SambaNova aren't live-verified — see §3.6). `deno lint` and `deno check` are clean across the whole function. Writing this test suite surfaced and fixed two real bugs before they shipped: the mock client was missing `.insert()`/`.update()` entirely, and `config.ts` captured `COPILOT_LLM_PROVIDER` eagerly at module load instead of per-access.
+
+### 3.11 Known Limitations (Sprint 6B)
+
+- Groq/SambaNova providers are implementation-complete but not live-verified (§3.6).
+- Migration 0010 is not executed against a live database (§3.7) — no Postgres instance available in this environment.
+- The Trust Model's claim-checking is heuristic, not a rigorous fact-checker (§3.5).
+- Fire-and-forget persistence (e.g. via `EdgeRuntime.waitUntil`) was scoped out — the orchestrator currently awaits conversation/tool-call writes before completing the turn rather than backgrounding them after the response starts. A reasonable follow-up, not a correctness gap.
+- No live end-to-end run against a deployed Supabase project + real household data was possible in this environment (no `supabase start`/hosted project). Every piece was verified individually (unit tests, live Gemini API calls, a booted local Deno server exercising the full HTTP request/response/error-code surface) but never as one fully wired system against real Postgres data.
+
+**Sprint 6B-RC certification (post-implementation audit):** this runtime was independently audited — conformance against the frozen design, 13-scenario AI Trust Model adversarial testing, provider failover, Capability Registry validation, context assembly validation, and a security audit. Verdict: conditionally certified, with 4 MUST-FIX findings not listed above because they were only surfaced by that audit (the AI Trust Model grounds numeric claims only — a hallucinated recipe/recommendation with no literal number in it is not mechanically caught; no timeout wraps the LLM provider call; no automatic provider failover exists; `InventoryTool` has no result cap and can plausibly blow the context-token budget in a single tool call for a larger household). Two further undisclosed (SHOULD-FIX) deviations from this document's own claims were also found: tool calls within one LLM round are dispatched sequentially rather than concurrently (contradicting design doc §7.5), and the `429 rate_limited` error code documented at design doc §8.4 has no implementation anywhere. Full findings register and remediation guidance: [`22_AI_COPILOT_RUNTIME_CERTIFICATION.md`](./22_AI_COPILOT_RUNTIME_CERTIFICATION.md).

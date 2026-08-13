@@ -1,0 +1,19 @@
+{
+  "imports": {
+    "@supabase/supabase-js": "npm:@supabase/supabase-js@2.45.4",
+    "@/": "../../../src/",
+    "@std/assert": "jsr:@std/assert@1"
+  },
+  "tasks": {
+    "test": "deno test --allow-read --allow-env --no-check _tests/",
+    "check": "deno check index.ts"
+  },
+  "compilerOptions": {
+    "strict": true,
+    "lib": ["deno.window"]
+  },
+  "fmt": {
+    "semiColons": false,
+    "singleQuote": true
+  }
+}

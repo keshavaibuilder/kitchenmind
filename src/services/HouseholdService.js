@@ -1,5 +1,5 @@
-import { supabaseClient } from './supabaseClient'
-import { normalizeError } from '@/utils/errors'
+import { supabaseClient } from './supabaseClient.js'
+import { normalizeError } from '../utils/errors.js'
 
 /**
  * HouseholdService
@@ -10,13 +10,16 @@ export const HouseholdService = {
   /**
    * Resolves household ID for a given user ID.
    * Type: Simple CRUD
-   * @param {string} userId 
+   * @param {string} userId
+   * @param {import('@supabase/supabase-js').SupabaseClient} [client] - Injectable client; see
+   *   InventoryService.getInventory for why. Used by the AI Copilot Edge Function to resolve
+   *   household_id from the verified session's user id, per-request.
    * @returns {Promise<string|null>} household_id or null
    */
-  async getHouseholdIdByUserId(userId) {
+  async getHouseholdIdByUserId(userId, client = supabaseClient) {
     if (!userId) return null
     try {
-      const { data, error } = await supabaseClient
+      const { data, error } = await client
         .from('members')
         .select('household_id')
         .eq('user_id', userId)
@@ -35,13 +38,15 @@ export const HouseholdService = {
   /**
    * Retrieves household profile by ID.
    * Type: Simple CRUD
-   * @param {string} householdId 
+   * @param {string} householdId
+   * @param {import('@supabase/supabase-js').SupabaseClient} [client] - Injectable client; see
+   *   InventoryService.getInventory for why.
    * @returns {Promise<Object|null>} Plain household object
    */
-  async getHouseholdDetails(householdId) {
+  async getHouseholdDetails(householdId, client = supabaseClient) {
     if (!householdId) return null
     try {
-      const { data, error } = await supabaseClient
+      const { data, error } = await client
         .from('household')
         .select('*')
         .eq('id', householdId)
@@ -61,12 +66,14 @@ export const HouseholdService = {
    * Retrieves all members of a household (used by rotiCalculator for flour requirement scaling).
    * Type: Simple CRUD
    * @param {string} householdId
+   * @param {import('@supabase/supabase-js').SupabaseClient} [client] - Injectable client; see
+   *   InventoryService.getInventory for why.
    * @returns {Promise<Array<Object>>}
    */
-  async getMembers(householdId) {
+  async getMembers(householdId, client = supabaseClient) {
     if (!householdId) return []
     try {
-      const { data, error } = await supabaseClient.from('members').select('*').eq('household_id', householdId)
+      const { data, error } = await client.from('members').select('*').eq('household_id', householdId)
       if (error) throw normalizeError(error, 'MEMBERS_FETCH_FAILED')
       return data ?? []
     } catch (err) {
@@ -77,13 +84,15 @@ export const HouseholdService = {
   /**
    * Retrieves preferences for a household.
    * Type: Simple CRUD
-   * @param {string} householdId 
+   * @param {string} householdId
+   * @param {import('@supabase/supabase-js').SupabaseClient} [client] - Injectable client; see
+   *   InventoryService.getInventory for why.
    * @returns {Promise<Object|null>} Plain preferences object
    */
-  async getPreferences(householdId) {
+  async getPreferences(householdId, client = supabaseClient) {
     if (!householdId) return null
     try {
-      const { data, error } = await supabaseClient
+      const { data, error } = await client
         .from('preferences')
         .select('*')
         .eq('household_id', householdId)

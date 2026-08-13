@@ -11,12 +11,14 @@ export const MealLogService = {
   /**
    * @param {string} householdId
    * @param {{ from?: string, to?: string }} [dateRange]
+   * @param {import('@supabase/supabase-js').SupabaseClient} [client] - Injectable client; see
+   *   InventoryService.getInventory for why.
    * @returns {Promise<Array<Object>>}
    */
-  async getMealLogs(householdId, dateRange = {}) {
+  async getMealLogs(householdId, dateRange = {}, client = supabaseClient) {
     if (!householdId) return []
     try {
-      let query = supabaseClient.from('meal_log').select('*').eq('household_id', householdId)
+      let query = client.from('meal_log').select('*').eq('household_id', householdId)
       if (dateRange.from) query = query.gte('date', dateRange.from)
       if (dateRange.to) query = query.lte('date', dateRange.to)
 
@@ -94,14 +96,14 @@ export const MealLogService = {
   /**
    * Cooked meal history, most recent first, with the associated recipe embedded (avoids N+1).
    * @param {string} householdId
-   * @param {{ limit?: number, offset?: number, recipeId?: string }} [pagination]
+   * @param {{ limit?: number, offset?: number, recipeId?: string, client?: import('@supabase/supabase-js').SupabaseClient }} [pagination]
    * @returns {Promise<{ mealLogs: Array<Object>, hasMore: boolean }>}
    */
   async getMealHistory(householdId, pagination = {}) {
-    const { limit = 20, offset = 0, recipeId } = pagination
+    const { limit = 20, offset = 0, recipeId, client = supabaseClient } = pagination
     if (!householdId) return { mealLogs: [], hasMore: false }
     try {
-      let query = supabaseClient
+      let query = client
         .from('meal_log')
         .select('*, recipes(id, name, cuisine, meal_type, image_url)')
         .eq('household_id', householdId)
@@ -125,12 +127,14 @@ export const MealLogService = {
    * Distinct recipe IDs cooked most recently, for the Library's "Recently cooked" filter.
    * @param {string} householdId
    * @param {number} [limit=10]
+   * @param {import('@supabase/supabase-js').SupabaseClient} [client] - Injectable client; see
+   *   InventoryService.getInventory for why.
    * @returns {Promise<Array<string>>}
    */
-  async getRecentlyCookedRecipeIds(householdId, limit = 10) {
+  async getRecentlyCookedRecipeIds(householdId, limit = 10, client = supabaseClient) {
     if (!householdId) return []
     try {
-      const { data, error } = await supabaseClient
+      const { data, error } = await client
         .from('meal_log')
         .select('recipe_id')
         .eq('household_id', householdId)
@@ -155,12 +159,14 @@ export const MealLogService = {
   /**
    * Ingredient-level deduction audit trail for a single cooked meal.
    * @param {string} mealLogId
+   * @param {import('@supabase/supabase-js').SupabaseClient} [client] - Injectable client; see
+   *   InventoryService.getInventory for why.
    * @returns {Promise<Array<Object>>}
    */
-  async getStockDeductionsForMeal(mealLogId) {
+  async getStockDeductionsForMeal(mealLogId, client = supabaseClient) {
     if (!mealLogId) return []
     try {
-      const { data, error } = await supabaseClient
+      const { data, error } = await client
         .from('stock_deductions')
         .select('*, inventory(canonical_name)')
         .eq('meal_log_id', mealLogId)

@@ -48,14 +48,16 @@ export const PredictionService = {
 
   /**
    * Fetches prediction summary for a household.
-   * 
-   * @param {string} householdId 
+   *
+   * @param {string} householdId
+   * @param {import('@supabase/supabase-js').SupabaseClient} [client] - Injectable client; see
+   *   InventoryService.getInventory for why.
    * @returns {Promise<Array<Object>>}
    */
-  async getHouseholdPredictions(householdId) {
+  async getHouseholdPredictions(householdId, client = supabaseClient) {
     if (!householdId) return []
     try {
-      const { data, error } = await supabaseClient
+      const { data, error } = await client
         .from('prediction_cache')
         .select('*')
         .eq('household_id', householdId)

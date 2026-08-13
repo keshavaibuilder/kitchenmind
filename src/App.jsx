@@ -18,6 +18,7 @@ import RecipeEditor  from './pages/RecipeEditor'
 import MealHistory   from './pages/MealHistory'
 import Dashboard     from './pages/Dashboard'
 import Planner       from './pages/Planner'
+import Copilot       from './pages/Copilot'
 
 const Soon = ({ name }) => (
   <div className="min-h-screen bg-[#F5F7FA] flex items-center justify-center text-gray-400">
@@ -78,6 +79,7 @@ function AppRoutes() {
       {/* Protected — with bottom nav */}
       <Route element={<ProtectedLayout />}>
         <Route path="/"                    element={<Home />} />
+        <Route path="/copilot"             element={<Copilot />} />
         <Route path="/dashboard"           element={<Dashboard />} />
         <Route path="/planner"             element={<Planner />} />
         <Route path="/scan"                element={<ScanBill />} />

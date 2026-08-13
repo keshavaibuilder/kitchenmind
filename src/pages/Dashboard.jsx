@@ -1,6 +1,10 @@
 import { useNavigate } from 'react-router-dom'
 import { useDashboard } from '../hooks/useDashboard'
+import { useProactiveInsights } from '../hooks/useProactiveInsights'
+import { useWorkflows } from '../hooks/useWorkflows'
 import HouseholdSnapshotHeader from '../components/dashboard/HouseholdSnapshotHeader'
+import InsightsSection from '../components/dashboard/InsightsSection'
+import { WorkflowSection } from '../components/workflow/WorkflowSection'
 import PantryHealthCard from '../components/dashboard/PantryHealthCard'
 import LowStockList from '../components/dashboard/LowStockList'
 import ExpiryRiskList from '../components/dashboard/ExpiryRiskList'
@@ -20,6 +24,21 @@ import { DashboardSkeleton } from '../components/Skeleton'
 export default function Dashboard() {
   const dashboard = useDashboard()
   const navigate = useNavigate()
+
+  const proactive = useProactiveInsights({
+    householdId: dashboard.household_id,
+    pantryItems: dashboard.inventoryItems,
+    predictions: dashboard.predictions,
+    expiringBatches: dashboard.expiringBatches,
+    mealLogs: dashboard.recentMealLogs,
+    recipes: dashboard.recipes,
+    observations: dashboard.observations,
+  })
+
+  const { workflows, dismissWorkflow, completeWorkflow } = useWorkflows({
+    householdId: dashboard.household_id,
+    activeInsights: proactive.insights,
+  })
 
   if (dashboard.isLoading) {
     return <DashboardSkeleton />
@@ -45,6 +64,22 @@ export default function Dashboard() {
   return (
     <div className="min-h-screen bg-[#F5F7FA] px-4 pt-8 pb-8 max-w-md mx-auto space-y-4">
       <HouseholdSnapshotHeader snapshot={dashboard.snapshot} onRefresh={dashboard.refetch} />
+
+      <InsightsSection
+        insights={proactive.insights}
+        criticalCount={proactive.criticalCount}
+        warningCount={proactive.warningCount}
+        infoCount={proactive.infoCount}
+        onDismiss={proactive.dismissInsight}
+        householdId={dashboard.household_id}
+      />
+
+      <WorkflowSection
+        workflows={workflows}
+        onDismiss={dismissWorkflow}
+        onComplete={completeWorkflow}
+        householdId={dashboard.household_id}
+      />
 
       {/* Phase 5B entry point — deliberately not a 6th BottomNav tab (crowds mobile nav);
           the Planner gets its own always-visible card here instead of competing for one of

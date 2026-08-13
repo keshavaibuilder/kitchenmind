@@ -13,12 +13,14 @@ export const RecipeService = {
    * Fetches global recipes plus this household's own custom recipes, paginated.
    * @param {string} householdId
    * @param {Object} [filters] - { mealType?, cuisine?, isVegetarian?: boolean, search?: string, limit?: number, offset?: number }
+   * @param {import('@supabase/supabase-js').SupabaseClient} [client] - Injectable client; see
+   *   InventoryService.getInventory for why.
    * @returns {Promise<{ recipes: Array<Object>, hasMore: boolean }>}
    */
-  async getRecipes(householdId, filters = {}) {
+  async getRecipes(householdId, filters = {}, client = supabaseClient) {
     const { mealType, cuisine, isVegetarian, search, limit = 20, offset = 0 } = filters
     try {
-      let query = supabaseClient.from('recipes').select('*')
+      let query = client.from('recipes').select('*')
       query = householdId ? query.or(`household_id.is.null,household_id.eq.${householdId}`) : query.is('household_id', null)
       if (mealType) query = query.eq('meal_type', mealType)
       if (cuisine) query = query.eq('cuisine', cuisine)
@@ -58,12 +60,14 @@ export const RecipeService = {
 
   /**
    * @param {string} recipeId
+   * @param {import('@supabase/supabase-js').SupabaseClient} [client] - Injectable client; see
+   *   InventoryService.getInventory for why.
    * @returns {Promise<Object|null>}
    */
-  async getRecipeById(recipeId) {
+  async getRecipeById(recipeId, client = supabaseClient) {
     if (!recipeId) return null
     try {
-      const { data, error } = await supabaseClient.from('recipes').select('*').eq('id', recipeId).maybeSingle()
+      const { data, error } = await client.from('recipes').select('*').eq('id', recipeId).maybeSingle()
       if (error) throw normalizeError(error, 'RECIPE_FETCH_FAILED')
       return data
     } catch (err) {

@@ -79,12 +79,14 @@ export const ConsumptionProfileService = {
    * Kitchen Intelligence Dashboard (Shopping Intelligence, Pantry Insights) instead of calling
    * getIngredientProfile per ingredient, which would be an N+1 query pattern.
    * @param {string} householdId
+   * @param {import('@supabase/supabase-js').SupabaseClient} [client] - Injectable client; see
+   *   InventoryService.getInventory for why.
    * @returns {Promise<Array<Object>>}
    */
-  async getAllProfiles(householdId) {
+  async getAllProfiles(householdId, client = supabaseClient) {
     if (!householdId) return []
     try {
-      const { data, error } = await supabaseClient
+      const { data, error } = await client
         .from('ingredient_consumption_profile')
         .select('*')
         .eq('household_id', householdId)

@@ -2,13 +2,10 @@ import { useLocation, useNavigate } from 'react-router-dom'
 
 const TABS = [
   { label: 'Home',      emoji: '🏠', path: '/'          },
+  { label: 'Copilot',   emoji: '✨', path: '/copilot', matchPrefixes: ['/copilot'] },
   { label: 'Scan',      emoji: '📷', path: '/scan'       },
-  // "Meals" now opens the Recipe Workspace (Phase 4C) — the central cooking experience.
-  // /meals itself stays reserved for a future meal-planner calendar (out of scope for 4C).
-  // matchPrefixes covers both /recipes (library) and /recipe/:id (detail, singular route).
   { label: 'Recipes',   emoji: '🥘', path: '/recipes', matchPrefixes: ['/recipes', '/recipe/'] },
   { label: 'Inventory', emoji: '📦', path: '/inventory'  },
-  // Phase 5A: Kitchen Intelligence Dashboard — additive, doesn't touch the existing Home screen.
   { label: 'Insights',  emoji: '🧠', path: '/dashboard'  },
 ]
 

@@ -1,5 +1,5 @@
-import { supabaseClient } from './supabaseClient'
-import { normalizeError } from '@/utils/errors'
+import { supabaseClient } from './supabaseClient.js'
+import { normalizeError } from '../utils/errors.js'
 
 /**
  * InventoryService
@@ -10,13 +10,17 @@ export const InventoryService = {
   /**
    * Retrieves all inventory items for a household.
    * Type: Simple CRUD
-   * @param {string} householdId 
+   * @param {string} householdId
+   * @param {import('@supabase/supabase-js').SupabaseClient} [client] - Injectable client, for
+   *   per-request-scoped callers (e.g. the AI Copilot Edge Function) that must not share the
+   *   browser's module-level singleton across concurrent households. Defaults to that singleton
+   *   for every existing browser call site, which is unaffected by this parameter.
    * @returns {Promise<Array<Object>>}
    */
-  async getInventory(householdId) {
+  async getInventory(householdId, client = supabaseClient) {
     if (!householdId) return []
     try {
-      const { data, error } = await supabaseClient
+      const { data, error } = await client
         .from('inventory')
         .select('*')
         .eq('household_id', householdId)
@@ -42,17 +46,17 @@ export const InventoryService = {
    * a real "no data yet" state, not a bug in this query.
    *
    * @param {string} householdId
-   * @param {{ withinDays?: number }} [options]
+   * @param {{ withinDays?: number, client?: import('@supabase/supabase-js').SupabaseClient }} [options]
    * @returns {Promise<Array<Object>>}
    */
-  async getExpiringBatches(householdId, { withinDays = 7 } = {}) {
+  async getExpiringBatches(householdId, { withinDays = 7, client = supabaseClient } = {}) {
     if (!householdId) return []
     try {
       const cutoff = new Date()
       cutoff.setDate(cutoff.getDate() + withinDays)
       const cutoffDate = cutoff.toISOString().slice(0, 10)
 
-      const { data, error } = await supabaseClient
+      const { data, error } = await client
         .from('inventory_batches')
         .select('id, remaining_grams, expiry_date, purchase_date, status, inventory!inner(id, household_id, canonical_name, category)')
         .eq('inventory.household_id', householdId)
