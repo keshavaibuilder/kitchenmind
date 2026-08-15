@@ -1,6 +1,8 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useInventory } from '../hooks/useInventory'
+import { InventoryConsumptionService } from '../services/InventoryConsumptionService'
+import ConsumeItemModal from '../components/inventory/ConsumeItemModal'
 
 const TABS = [
   { label: 'All',         value: 'All'               },
@@ -29,9 +31,10 @@ function relativeTime(dateStr) {
   return `Updated ${days} days ago`
 }
 
-function ItemCard({ item }) {
+function ItemCard({ item, onConsume }) {
   const isLow = item.low_stock_threshold > 0 && item.quantity_grams <= item.low_stock_threshold
   const style = CAT_STYLE[item.category] ?? CAT_STYLE['Miscellaneous']
+  const compatibleUnits = InventoryConsumptionService.getCompatibleUnits(item)
 
   return (
     <div className={`bg-white rounded-2xl border border-gray-100 border-l-4 ${isLow ? 'border-l-red-400' : style.border} shadow-sm px-4 py-3 flex items-center gap-3`}>
@@ -51,6 +54,9 @@ function ItemCard({ item }) {
           )}
         </div>
         <p className="text-base font-bold text-[#2E86AB]">{item.display_quantity}</p>
+        {item.display_quantity_detail && (
+          <p className="text-[11px] text-gray-500">{item.display_quantity_detail}</p>
+        )}
         <p className="text-[11px] text-gray-400 mt-0.5">{relativeTime(item.last_updated)}</p>
       </div>
 
@@ -59,6 +65,17 @@ function ItemCard({ item }) {
         {item.category === 'Fresh & Vegetables' ? 'Fresh' :
          item.category === 'Miscellaneous' ? 'Misc' : item.category}
       </span>
+
+      {/* Manual consumption entry point — only offered when at least one unit is safe to
+          convert (getCompatibleUnits never returns a fabricated conversion). */}
+      {compatibleUnits.length > 0 && (
+        <button
+          onClick={() => onConsume({ ...item, compatibleUnits })}
+          className="text-[11px] font-bold px-2 py-1 rounded-full flex-shrink-0 border border-gray-200 text-gray-500 active:scale-95 transition-transform"
+        >
+          Use
+        </button>
+      )}
     </div>
   )
 }
@@ -67,6 +84,7 @@ export default function Inventory() {
   const navigate = useNavigate()
   const { items, isLoading, refetch } = useInventory()
   const [activeTab, setActiveTab] = useState('All')
+  const [consumeTarget, setConsumeTarget] = useState(null)
 
   const displayed = activeTab === 'All'
     ? items
@@ -171,9 +189,13 @@ export default function Inventory() {
             </button>
           </div>
         ) : (
-          displayed.map((item) => <ItemCard key={item.id} item={item} />)
+          displayed.map((item) => <ItemCard key={item.id} item={item} onConsume={setConsumeTarget} />)
         )}
       </div>
+
+      {consumeTarget && (
+        <ConsumeItemModal item={consumeTarget} onClose={() => setConsumeTarget(null)} />
+      )}
     </div>
   )
 }

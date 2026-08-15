@@ -13,8 +13,15 @@ export function useBillProcessing() {
   })
 
   return {
-    processBill: (base64Image, mimeType = 'image/jpeg') =>
-      mutation.mutateAsync({ base64Image, mimeType }),
+    processBill: async (base64Image, mimeType = 'image/jpeg') => {
+      const result = await mutation.mutateAsync({ base64Image, mimeType })
+      // TEMPORARY DIAGNOSTIC — remove after the ScanBill review-state bug is confirmed/fixed.
+      console.info('[useBillProcessing] process result', {
+        keys: Object.keys(result || {}),
+        itemCount: Array.isArray(result?.items) ? result.items.length : 'not-an-array',
+      })
+      return result
+    },
     isProcessing: mutation.isPending,
     error: mutation.error ?? null,
     result: mutation.data ?? null,

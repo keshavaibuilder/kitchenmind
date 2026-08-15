@@ -1,16 +1,28 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { InventoryService } from '@/services/InventoryService'
+import { InventoryConsumptionService } from '@/services/InventoryConsumptionService'
 import { gramsToAndaaza } from '@/lib/andaaza'
+import { formatInventoryQuantity } from '@/lib/quantityFormat'
 import useAuthStore from '@/store/authStore'
 
 function enrichItem(item) {
+  // Scanned-bill items (and any item that has been reconciled with real purchase data)
+  // carry base_unit — use the deterministic, real-unit formatter for those. Only fall back
+  // to the legacy qualitative buckets for rows with no semantic data at all (pre-migration
+  // records, or manual AddItem entries that never had a real unit to begin with).
+  const semantic = formatInventoryQuantity(item)
+  if (semantic) {
+    return { ...item, display_quantity: semantic.primary, display_quantity_detail: semantic.secondary }
+  }
+
   // Eggs and piece-counted items: display count directly
   if (item.display_unit === 'pcs') {
-    return { ...item, display_quantity: `${item.quantity_grams} pcs` }
+    return { ...item, display_quantity: `${item.quantity_grams} pcs`, display_quantity_detail: null }
   }
   return {
     ...item,
     display_quantity: gramsToAndaaza(item.quantity_grams, item.category),
+    display_quantity_detail: null,
   }
 }
 
@@ -62,6 +74,15 @@ export function useInventory() {
     },
   })
 
+  // 5. Manual consumption mutation ("I used 500ml mustard oil") with automatic invalidation
+  const consumeItemMutation = useMutation({
+    mutationFn: ({ itemId, item, quantity, unit }) =>
+      InventoryConsumptionService.consumeItem(household_id, { itemId, item, quantity, unit }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['inventory', household_id] })
+    },
+  })
+
   return {
     items:     query.data ?? [],
     isLoading: query.isLoading,
@@ -75,6 +96,9 @@ export function useInventory() {
     isUpdating:  updateItemMutation.isPending,
     deleteItem:  deleteItemMutation.mutateAsync,
     isDeleting:  deleteItemMutation.isPending,
+    consumeItem:   consumeItemMutation.mutateAsync,
+    isConsuming:   consumeItemMutation.isPending,
+    consumeError:  consumeItemMutation.error,
   }
 }
 

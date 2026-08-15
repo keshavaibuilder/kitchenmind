@@ -4,7 +4,7 @@ import { AIObservationService } from './AIObservationService.js'
 import { AndaazaLearningEngine } from './AndaazaLearningEngine.js'
 import { normalizeError } from '../utils/errors.js'
 import { logger } from '../utils/logger.js'
-import { convertToUnitGrams } from '../utils/units.js'
+import { convertToUnitGrams, deriveBaseUnit } from '../utils/units.js'
 
 /**
  * BillPersistenceService
@@ -70,6 +70,31 @@ export const BillPersistenceService = {
 
       const unitGrams = convertToUnitGrams(quantityValue, unit)
 
+      // Semantic quantity fields (audit: these were being computed correctly all the way
+      // through OCR/review and then silently dropped here before reaching the RPC payload).
+      // packSize/purchaseQuantity are OCR-native primitives — see OCRService.js — carried
+      // through userEdits unchanged; never recomputed or fabricated in this layer.
+      const rawPurchaseQuantity =
+        userEdits.purchaseQuantity !== undefined && userEdits.purchaseQuantity !== ''
+          ? userEdits.purchaseQuantity
+          : ocr.purchaseQuantity
+      const purchaseQuantity =
+        rawPurchaseQuantity !== undefined && rawPurchaseQuantity !== null && rawPurchaseQuantity !== ''
+          ? Number(rawPurchaseQuantity)
+          : null
+
+      const rawPackSize = userEdits.packSize !== undefined ? userEdits.packSize : ocr.packSize
+      const packSize = rawPackSize === null || rawPackSize === undefined || rawPackSize === '' ? null : Number(rawPackSize)
+      const hasPackSize = typeof packSize === 'number' && !isNaN(packSize) && packSize > 0
+
+      // A packaged item's purchaseQuantity is a pack COUNT ('pcs'), even though `unit` here
+      // is the pack's own unit (e.g. 'g' for a 110g pouch) — matches ScanBill's review-time
+      // "N packs × Punit" display, which already treats purchaseQuantity as a count whenever
+      // packSize is present.
+      const purchaseUnit = hasPackSize ? 'pcs' : unit
+      const packUnit = hasPackSize ? unit : null
+      const baseUnit = deriveBaseUnit(unit)
+
       return {
         item_name: itemName,
         canonical_name: canonicalName,
@@ -78,6 +103,11 @@ export const BillPersistenceService = {
         unit: unit,
         unit_grams: unitGrams,
         cost: price,
+        purchase_quantity: purchaseQuantity,
+        purchase_unit: purchaseUnit,
+        pack_size: hasPackSize ? packSize : null,
+        pack_unit: packUnit,
+        base_unit: baseUnit,
       }
     })
 
@@ -93,6 +123,19 @@ export const BillPersistenceService = {
       items: formattedItems,
     }
 
+    // TEMPORARY DIAGNOSTIC — remove once the HTTP 400 root cause is confirmed.
+    // Redacted: no household UUID, no item names/prices, just shape/presence.
+    console.info('[BillCommit] RPC payload shape', {
+      topLevelKeys: Object.keys(rpcPayload),
+      billKeys: ['household_id', 'idempotency_key', 'merchant', 'bill_date', 'total_amount', 'source'].filter(
+        (k) => rpcPayload[k] !== undefined
+      ),
+      itemCount: rpcPayload.items.length,
+      firstItemKeys: rpcPayload.items[0] ? Object.keys(rpcPayload.items[0]) : [],
+      householdIdPresent: Boolean(rpcPayload.household_id),
+      idempotencyKeyPresent: Boolean(rpcPayload.idempotency_key),
+    })
+
     // Execute atomic PostgreSQL RPC commit
     let rpcResult
     try {
@@ -101,6 +144,17 @@ export const BillPersistenceService = {
       })
 
       if (error) {
+        // TEMPORARY DIAGNOSTIC — remove once the HTTP 400 root cause is confirmed.
+        // normalizeError() below overwrites `code` with 'BILL_COMMIT_FAILED' (its defaultCode
+        // param takes precedence over err.code), which is why the real Postgres/PostgREST
+        // code, message, details, and hint have been invisible downstream until now.
+        console.error('[BillCommit] RPC error', {
+          code: error?.code,
+          message: error?.message,
+          details: error?.details,
+          hint: error?.hint,
+          status: error?.status,
+        })
         throw normalizeError(error, 'BILL_COMMIT_FAILED')
       }
 

@@ -77,6 +77,8 @@ export default function ScanBill() {
           itemName: item.ocr.itemName,
           canonicalName: item.match.canonicalName,
           category: item.match.category,
+          purchaseQuantity: item.ocr.purchaseQuantity,
+          packSize: item.ocr.packSize,
           quantity: item.ocr.quantity,
           unit: item.ocr.unit,
           price: item.ocr.price !== null ? String(item.ocr.price) : '',
@@ -86,7 +88,13 @@ export default function ScanBill() {
 
       setItems(initializedItems)
       setPhase('review')
+      // TEMPORARY DIAGNOSTIC — remove after the ScanBill review-state bug is confirmed/fixed.
+      console.info('[ScanBill] success state', { reviewItemsCount: initializedItems.length, phaseSet: 'review' })
     } catch (err) {
+      // TEMPORARY DIAGNOSTIC — remove after the ScanBill review-state bug is confirmed/fixed.
+      // This catch previously logged nothing at all — if an exception is actually occurring,
+      // this is the first place that would have been silent.
+      console.error('[ScanBill] handleScan caught an exception', { code: err?.code, message: err?.message, stack: err?.stack })
       setErrorMsg(err.message || 'Could not process this bill. Please try again.')
       setPhase('error')
     }
@@ -384,6 +392,11 @@ export default function ScanBill() {
                         ))}
                       </select>
                     </div>
+                    {item.userEdits.packSize != null && (
+                      <p className="text-[10px] text-amber-700/80">
+                        {item.userEdits.purchaseQuantity} pack{item.userEdits.purchaseQuantity === 1 ? '' : 's'} × {item.userEdits.packSize}{item.userEdits.unit} = {item.userEdits.quantity}{item.userEdits.unit}
+                      </p>
+                    )}
                   </div>
 
                   <div className="flex gap-2 mt-3 pt-2 border-t border-amber-200/50">
@@ -421,6 +434,9 @@ export default function ScanBill() {
                       <p className="text-xs font-bold text-[#1E3A5F]">{item.userEdits.canonicalName}</p>
                       <p className="text-[11px] text-gray-400">
                         {item.userEdits.quantity} {item.userEdits.unit} {item.userEdits.price ? `· ₹${item.userEdits.price}` : ''}
+                        {item.userEdits.packSize != null && (
+                          <span className="text-gray-300"> · {item.userEdits.purchaseQuantity} × {item.userEdits.packSize}{item.userEdits.unit}</span>
+                        )}
                       </p>
                     </div>
                     <button onClick={() => removeItem(item.id)} className="text-xs text-red-500 px-2 py-1">✕</button>

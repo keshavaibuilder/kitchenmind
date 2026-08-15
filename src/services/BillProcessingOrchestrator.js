@@ -14,7 +14,7 @@ export const BillProcessingOrchestrator = {
    * 
    * @param {string} base64Image - Base64 encoded image string
    * @param {string} [mimeType='image/jpeg'] - Image MIME type
-   * @returns {Promise<{ merchant: string|null, billDate: string|null, totalAmount: number|null, items: Array<{ ocr: Object, match: Object }>, processingSummary: { totalItems: number, matchedItems: number, manualReviewItems: number } }>}
+   * @returns {Promise<{ merchant: string|null, billDate: string|null, totalAmount: number|null, items: Array<{ ocr: { itemName: string, purchaseQuantity: number, packSize: number|null, quantity: number, unit: string, price: number|null }, match: Object }>, processingSummary: { totalItems: number, matchedItems: number, manualReviewItems: number } }>}
    */
   async processBillImage(base64Image, mimeType = 'image/jpeg') {
     if (!base64Image) {
@@ -26,8 +26,16 @@ export const BillProcessingOrchestrator = {
     try {
       ocrResult = await OCRService.scanBill(base64Image, mimeType)
     } catch (err) {
+      // TEMPORARY DIAGNOSTIC — remove after the ScanBill review-state bug is confirmed/fixed.
+      console.info('[Orchestrator] OCR call threw', { code: err.code, message: err.message })
       throw normalizeError(err, 'BILL_PROCESSING_OCR_FAILED')
     }
+
+    // TEMPORARY DIAGNOSTIC — remove after the ScanBill review-state bug is confirmed/fixed.
+    console.info('[Orchestrator] OCR result received', {
+      keys: Object.keys(ocrResult || {}),
+      itemCount: Array.isArray(ocrResult?.items) ? ocrResult.items.length : 'not-an-array',
+    })
 
     const { merchant, billDate, totalAmount, items: ocrItems } = ocrResult
 
@@ -66,6 +74,8 @@ export const BillProcessingOrchestrator = {
         return {
           ocr: {
             itemName: item.itemName,
+            purchaseQuantity: item.purchaseQuantity,
+            packSize: item.packSize,
             quantity: item.quantity,
             unit: item.unit,
             price: item.price,
@@ -83,7 +93,7 @@ export const BillProcessingOrchestrator = {
     )
 
     // Step 3: Return normalized business result object
-    return {
+    const finalResult = {
       merchant: merchant ?? null,
       billDate: billDate ?? null,
       totalAmount: totalAmount !== null ? Number(totalAmount) : null,
@@ -94,5 +104,8 @@ export const BillProcessingOrchestrator = {
         manualReviewItems: manualReviewCount,
       },
     }
+    // TEMPORARY DIAGNOSTIC — remove after the ScanBill review-state bug is confirmed/fixed.
+    console.info('[Orchestrator] final result', { itemCount: finalResult.items.length, processingSummary: finalResult.processingSummary })
+    return finalResult
   },
 }
