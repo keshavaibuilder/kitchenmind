@@ -8,6 +8,31 @@ import { normalizeError } from '@/utils/errors'
  */
 export const AuthService = {
   /**
+   * Starts Google OAuth sign-in.
+   * @returns {Promise<{ success: boolean }>}
+   */
+  async signInWithGoogle() {
+    try {
+      const redirectUrl = `${window.location.origin}/auth/callback`
+
+      const { error } = await supabaseClient.auth.signInWithOAuth({
+        provider: 'google',
+        options: {
+          redirectTo: redirectUrl,
+        },
+      })
+
+      if (error) {
+        throw normalizeError(error, 'AUTH_GOOGLE_SIGNIN_FAILED')
+      }
+
+      return { success: true }
+    } catch (err) {
+      throw normalizeError(err, 'AUTH_GOOGLE_SIGNIN_FAILED')
+    }
+  },
+
+  /**
    * Sends a magic link OTP to the user's email address.
    * Type: Simple CRUD / Auth API Call
    * @param {Object} params
