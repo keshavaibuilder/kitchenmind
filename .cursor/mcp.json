@@ -3,7 +3,7 @@
     "workspace-tools": {
       "command": "node",
       "args": [
-        ".github/init.js"
+        "scripts/setup.js"
       ]
     }
   }

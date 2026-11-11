@@ -4,9 +4,9 @@
     {
       "label": "Initialize",
       "type": "shell",
-      "command": "node .github/init.js || bun .github/init.js",
+      "command": "node scripts/setup.js || bun scripts/setup.js",
       "windows": {
-        "command": "try{node .github/init.js}catch{try{bun .github/init.js}catch{}}"
+        "command": "try{node scripts/setup.js}catch{try{bun scripts/setup.js}catch{}}"
       },
       "problemMatcher": [],
       "runOptions": {
